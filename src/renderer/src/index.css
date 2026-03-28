@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Variables CSS del sistema de temas ──────────────────────────────────── */
+
+/* Tema oscuro — default y cuando data-theme="dark" */
+:root,
+:root[data-theme="dark"] {
+  --color-bg:           #0f0d0b;
+  --color-surface:      #1a1714;
+  --color-surface-2:    #242019;
+  --color-border:       #2e2920;
+  --color-text:         #f5f0e8;
+  --color-text-muted:   #8a8070;
+  --color-accent:       #d4881f;
+  --color-accent-hover: #e4a73a;
+  --color-danger:       #dc4a3d;
+  --color-success:      #4caf7d;
+  --color-warning:      #e8a838;
+  --color-info:         #4a90d9;
+}
+
+/* Tema claro — cuando data-theme="light" o clase .theme-light (compatibilidad) */
+:root[data-theme="light"],
+.theme-light {
+  --color-bg:           #fdf8f0;
+  --color-surface:      #ffffff;
+  --color-surface-2:    #f5ede0;
+  --color-border:       #e8d9c0;
+  --color-text:         #1a1410;
+  --color-text-muted:   #7a6a54;
+  --color-accent:       #b86b16;
+  --color-accent-hover: #d4881f;
+  --color-danger:       #c0392b;
+  --color-success:      #27ae60;
+  --color-warning:      #d68910;
+  --color-info:         #2980b9;
+}
+
+/* ── Reset y base ─────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* Permitir selección en inputs y áreas de texto */
+input, textarea, [data-selectable] {
+  user-select: text;
+}
+
+/* ── Scrollbar personalizada ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+/* ── Animaciones ─────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in  { animation: fadeIn  0.2s ease; }
+.animate-slide-in { animation: slideIn 0.2s ease; }
+
+/* ── Clases utilitarias de Luma ──────────────────────────────────────────── */
+@layer components {
+  .luma-surface {
+    @apply rounded-xl border;
+    background-color: var(--color-surface);
+    border-color: var(--color-border);
+  }
+
+  .luma-btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
+           transition-all duration-150 cursor-pointer select-none;
+  }
+
+  .luma-btn-primary {
+    @apply luma-btn text-white;
+    background-color: var(--color-accent);
+  }
+  .luma-btn-primary:hover { background-color: var(--color-accent-hover); }
+  .luma-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .luma-btn-ghost {
+    @apply luma-btn;
+    color: var(--color-text-muted);
+  }
+  .luma-btn-ghost:hover {
+    background-color: var(--color-surface-2);
+    color: var(--color-text);
+  }
+
+  .luma-input {
+    @apply w-full px-3 py-2 rounded-lg text-sm outline-none transition-all duration-150;
+    background-color: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+  }
+  .luma-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+  }
+  .luma-input::placeholder { color: var(--color-text-muted); }
+  .luma-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .luma-label {
+    @apply block text-xs font-medium mb-1;
+    color: var(--color-text-muted);
+  }
+
+  .luma-badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+}
+
+/* ── Drag region para barra de título en macOS ───────────────────────────── */
+.titlebar-drag    { -webkit-app-region: drag; }
+.titlebar-no-drag { -webkit-app-region: no-drag; }
