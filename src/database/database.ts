@@ -29,6 +29,13 @@ export function getDb(): Database.Database {
   return db
 }
 
+export function closeDatabase(): void {
+  if (db) {
+    db.close()
+    log('Conexión a la base de datos cerrada.')
+  }
+}
+
 // ── Migraciones ──────────────────────────────────────────────────────────────
 
 function runMigrations() {

@@ -6,7 +6,11 @@ const api = {
   dbReady: () => electron.ipcRenderer.invoke("app:dbReady"),
   getLogPath: () => electron.ipcRenderer.invoke("app:getLogPath"),
   readLogs: (lines) => electron.ipcRenderer.invoke("app:readLogs", lines),
+  clearLogs: () => electron.ipcRenderer.invoke("app:clearLogs"),
   logError: (message, stack) => electron.ipcRenderer.invoke("app:logError", message, stack),
+  getErrorLogs: (page, pageSize) => electron.ipcRenderer.invoke("app:getErrorLogs", page, pageSize),
+  exportDb: () => electron.ipcRenderer.invoke("app:exportDb"),
+  importDb: () => electron.ipcRenderer.invoke("app:importDb"),
   // ── EMPLEADOS ─────────────────────────────────────────────────────────
   employees: {
     list: (p) => electron.ipcRenderer.invoke("employees:list", p),

@@ -8,11 +8,15 @@ export type ElectronAPI = typeof api
 
 const api = {
   // ── APP ───────────────────────────────────────────────────────────────
-  ping:       () => ipcRenderer.invoke('app:ping'),
-  dbReady:    () => ipcRenderer.invoke('app:dbReady'),
-  getLogPath: () => ipcRenderer.invoke('app:getLogPath'),
-  readLogs:   (lines?: number) => ipcRenderer.invoke('app:readLogs', lines),
-  logError:   (message: string, stack?: string) => ipcRenderer.invoke('app:logError', message, stack),
+  ping:         () => ipcRenderer.invoke('app:ping'),
+  dbReady:      () => ipcRenderer.invoke('app:dbReady'),
+  getLogPath:   () => ipcRenderer.invoke('app:getLogPath'),
+  readLogs:     (lines?: number) => ipcRenderer.invoke('app:readLogs', lines),
+  clearLogs:    () => ipcRenderer.invoke('app:clearLogs'),
+  logError:     (message: string, stack?: string) => ipcRenderer.invoke('app:logError', message, stack),
+  getErrorLogs: (page?: number, pageSize?: number) => ipcRenderer.invoke('app:getErrorLogs', page, pageSize),
+  exportDb:     () => ipcRenderer.invoke('app:exportDb'),
+  importDb:     () => ipcRenderer.invoke('app:importDb'),
 
   // ── EMPLEADOS ─────────────────────────────────────────────────────────
   employees: {

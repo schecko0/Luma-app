@@ -45,6 +45,11 @@ export function registerCashRegisterHandlers(ipcMain: IpcMain) {
         opened_at:    nowISO(),
         created_at:   nowISO(),
       })
+
+      // Log de auditoría
+      db.prepare("INSERT INTO error_log (level, message, context, occurred_at) VALUES ('info', ?, 'AUDIT', ?)")
+        .run(`Caja abierta (ID ${result.lastInsertRowid}) con fondo inicial de $${payload.initial_cash.toFixed(2)}`, nowISO())
+
       return { ok: true, data: { id: result.lastInsertRowid } }
     } catch (err: unknown) { return { ok: false, error: String(err) } }
   })
@@ -129,6 +134,10 @@ export function registerCashRegisterHandlers(ipcMain: IpcMain) {
         id:                      payload.register_id,
       })
 
+      // Log de auditoría con cuadre
+      const diffStr = `Caja cerrada (ID ${payload.register_id}). Diferencias: Efec: $${diffCash.toFixed(2)}, Tarj: $${diffCard.toFixed(2)}, Trans: $${diffTransfer.toFixed(2)}`
+      db.prepare("INSERT INTO error_log (level, message, context, occurred_at) VALUES ('info', ?, 'AUDIT', ?)").run(diffStr, nowISO())
+
       return {
         ok: true,
         data: { systemCash, systemCard, systemTransfer, diffCash, diffCard, diffTransfer },
@@ -188,6 +197,11 @@ export function registerCashRegisterHandlers(ipcMain: IpcMain) {
         VALUES
           (@register_id, @category_id, @type, @payment_method, @amount, @description, @reference, @created_by, @created_at)
       `).run({ ...data, created_at: nowISO() })
+
+      // Auditoría de movimiento
+      const typeStr = data.type === 'in' ? 'Entrada' : 'Salida'
+      db.prepare("INSERT INTO error_log (level, message, context, occurred_at) VALUES ('info', ?, 'AUDIT', ?)")
+        .run(`${typeStr} de caja: $${data.amount.toFixed(2)} - ${data.description || 'Sin descripción'}`, nowISO())
 
       return { ok: true, data: { id: result.lastInsertRowid } }
     } catch (err: unknown) { return { ok: false, error: String(err) } }

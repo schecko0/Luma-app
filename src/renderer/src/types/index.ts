@@ -245,3 +245,13 @@ export interface PaginationParams {
   page: number; pageSize: number; search?: string
   sortBy?: string; sortDir?: 'asc' | 'desc'
 }
+
+// ── Sistema ───────────────────────────────────────────────────────────────────
+export interface ErrorLog {
+  id: number
+  level: string
+  message: string
+  stack: string | null
+  context: string | null
+  occurred_at: string
+}

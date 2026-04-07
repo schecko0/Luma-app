@@ -1,8 +1,10 @@
 import type { IpcMain } from 'electron'
-import { app } from 'electron'
+import { app, dialog } from 'electron'
 import fs from 'fs'
+import path from 'path'
 import { logger } from '../logger'
-import { getDb } from '../../database/database'
+import { getDb, closeDatabase, initDatabase } from '../../database/database'
+import { nowISO } from '../../database/dbUtils'
 
 export function registerAppHandlers(ipcMain: IpcMain) {
 
@@ -25,9 +27,162 @@ export function registerAppHandlers(ipcMain: IpcMain) {
     return all.slice(-lines).join('\n')
   })
 
+  // Vaciar archivo de logs
+  ipcMain.handle('app:clearLogs', () => {
+    const ok = logger.clearLogs()
+    if (ok) {
+      try {
+        getDb().prepare(`
+          INSERT INTO error_log (level, message, context, occurred_at) 
+          VALUES ('info', 'Archivo luma.log vaciado por el administrador', 'AUDIT', ?)
+        `).run(nowISO())
+      } catch (_) {}
+    }
+    return ok
+  })
+
+  // Obtener errores guardados en la base de datos
+  ipcMain.handle('app:getErrorLogs', (_event, page: number = 1, pageSize: number = 20) => {
+    try {
+      const db = getDb()
+      const offset = (page - 1) * pageSize
+      
+      const items = db.prepare(`
+        SELECT * FROM error_log 
+        ORDER BY occurred_at DESC 
+        LIMIT ? OFFSET ?
+      `).all(pageSize, offset)
+
+      const total = (db.prepare('SELECT COUNT(*) as count FROM error_log').get() as any).count
+
+      return { ok: true, data: { items, total, page, pageSize } }
+    } catch (err) {
+      logger.error('Error al obtener logs de la BD', err)
+      return { ok: false, error: 'No se pudieron obtener los logs de la base de datos.' }
+    }
+  })
+
+  // Exportar base de datos
+  ipcMain.handle('app:exportDb', async () => {
+    try {
+      const { filePath, canceled } = await dialog.showSaveDialog({
+        title: 'Exportar Base de Datos',
+        defaultPath: `luma_backup_${new Date().toISOString().split('T')[0]}.db`,
+        filters: [{ name: 'SQLite Database', extensions: ['db'] }]
+      })
+
+      if (canceled || !filePath) return { ok: false, error: 'Cancelado por el usuario' }
+
+      const dbPath = path.join(app.getPath('userData'), 'luma.db')
+      
+      // 1. FORZAR CHECKPOINT (Pasar datos de luma.db-wal a luma.db)
+      try {
+        const db = getDb()
+        db.pragma('wal_checkpoint(FULL)')
+      } catch (checkpointErr) {
+        logger.error('Error al hacer checkpoint antes de exportar', checkpointErr)
+      }
+
+      // 2. LOG ANTES DE COPIAR (para que el respaldo tenga el evento)
+      const now = nowISO()
+      try {
+        getDb().prepare(`
+          INSERT INTO error_log (level, message, context, occurred_at) 
+          VALUES ('info', ?, 'AUDIT', ?)
+        `).run(`Base de datos exportada a: ${filePath}`, now)
+        
+        // Otro checkpoint rápido para incluir este último log
+        getDb().pragma('wal_checkpoint(FULL)')
+      } catch (_) {}
+
+      fs.copyFileSync(dbPath, filePath)
+      
+      logger.audit(`Base de datos exportada a: ${filePath}`)
+      return { ok: true, data: filePath }
+    } catch (err) {
+      logger.error('Error exportando BD', err)
+      return { ok: false, error: 'Error al exportar la base de datos.' }
+    }
+  })
+
+  // Importar base de datos
+  ipcMain.handle('app:importDb', async () => {
+    const dbPath = path.join(app.getPath('userData'), 'luma.db')
+    const bakPath = dbPath + '.bak'
+
+    try {
+      const { filePaths, canceled } = await dialog.showOpenDialog({
+        title: 'Importar Base de Datos',
+        filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+        properties: ['openFile']
+      })
+
+      if (canceled || filePaths.length === 0) return { ok: false, error: 'Cancelado' }
+      const newPath = filePaths[0]
+
+      // 1. Log en la DB actual (Auditoría de "Inicio de Importación")
+      const now = nowISO()
+      try {
+        getDb().prepare(`
+          INSERT INTO error_log (level, message, context, occurred_at) 
+          VALUES ('info', ?, 'AUDIT', ?)
+        `).run(`Inicio de importación desde: ${newPath}`, now)
+      } catch (_) {}
+
+      // 2. Cerrar conexión actual
+      closeDatabase()
+
+      // 3. Hacer respaldo de la actual
+      if (fs.existsSync(dbPath)) {
+        fs.copyFileSync(dbPath, bakPath)
+      }
+
+      // 4. Sobrescribir con la nueva
+      fs.copyFileSync(newPath, dbPath)
+
+      // 5. Intentar inicializar de nuevo
+      try {
+        await initDatabase()
+        if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath) // Limpiar respaldo si todo ok
+        
+        // Log en la NUEVA DB importada
+        getDb().prepare(`
+          INSERT INTO error_log (level, message, context, occurred_at) 
+          VALUES ('info', ?, 'AUDIT', ?)
+        `).run(`Importación exitosa desde: ${newPath}`, nowISO())
+
+        logger.audit(`Base de datos importada exitosamente desde: ${newPath}`)
+        return { ok: true }
+      } catch (initErr) {
+        // 5. Fallback: restaurar respaldo si falla el init
+        logger.error('Error inicializando la base de datos importada, restaurando respaldo...', initErr)
+        if (fs.existsSync(bakPath)) {
+          fs.copyFileSync(bakPath, dbPath)
+          await initDatabase()
+        }
+        return { ok: false, error: 'El archivo no es una base de datos válida de Luma App.' }
+      }
+    } catch (err) {
+      logger.error('Error general importando BD', err)
+      return { ok: false, error: 'Error crítico durante la importación.' }
+    }
+  })
+
   // Handler global de errores del renderer
   ipcMain.handle('app:logError', (_event, message: string, stack?: string) => {
     logger.error(`[Renderer] ${message}`, stack ? { stack } : undefined)
+    
+    try {
+      const db = getDb()
+      db.prepare(`
+        INSERT INTO error_log (level, message, stack, context, occurred_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run('error', `[Renderer] ${message}`, stack || null, 'IPC', nowISO())
+    } catch (err) {
+      // Si falla la BD, al menos ya se logueó en el archivo
+      console.error('Fallo al guardar error en DB:', err)
+    }
+
     return { ok: true }
   })
 

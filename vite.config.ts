@@ -4,12 +4,26 @@ import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import path from 'path'
 
-export default defineConfig({
-  // ── Sin "root" custom ────────────────────────────────────────────────────
-  // index.html está en la raíz del proyecto (patrón estándar de vite-plugin-electron).
-  // Así todos los outDir relativos se resuelven desde la raíz y Electron
-  // encuentra dist/main/main.js exactamente donde lo espera package.json.
+// Módulos de Node.js que deben quedar externos en el proceso principal.
+// googleapis los usa todos internamente — deben ser external o Vite
+// intenta bundlearlos y agota la memoria (~4 GB de tipos).
+const NODE_BUILTINS = [
+  'electron',
+  'better-sqlite3',
+  'googleapis',
+  // Node.js built-ins usados por googleapis y otros módulos nativos
+  'path', 'fs', 'os', 'crypto', 'url', 'http', 'https',
+  'http2', 'net', 'tls', 'zlib', 'stream', 'events',
+  'buffer', 'util', 'assert', 'querystring', 'string_decoder',
+  'child_process', 'worker_threads',
+  // googleapis sub-paquetes que pueden importarse directamente
+  'google-auth-library',
+  'gaxios',
+  'gcp-metadata',
+  'google-p12-pem',
+]
 
+export default defineConfig({
   plugins: [
     react(),
 
@@ -18,7 +32,7 @@ export default defineConfig({
         // ── Proceso principal ────────────────────────────────────────────
         entry: 'src/main/main.ts',
         onstart(options) {
-          options.startup() // vite-plugin-electron lanza Electron aquí
+          options.startup()
         },
         vite: {
           build: {
@@ -26,7 +40,7 @@ export default defineConfig({
             sourcemap: true,
             minify: false,
             rollupOptions: {
-              external: ['better-sqlite3', 'electron', 'path', 'fs', 'os', 'crypto'],
+              external: NODE_BUILTINS,
             },
           },
         },
@@ -35,7 +49,7 @@ export default defineConfig({
         // ── Preload ──────────────────────────────────────────────────────
         entry: 'src/preload/preload.ts',
         onstart(options) {
-          options.reload() // recarga el renderer cuando el preload cambia
+          options.reload()
         },
         vite: {
           build: {
@@ -61,7 +75,6 @@ export default defineConfig({
     },
   },
 
-  // El build del renderer va a dist/renderer
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,

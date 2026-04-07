@@ -163,12 +163,23 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
           `).run({ now, id: payload.client_id })
         }
 
+        // 9. Registrar auditoría
+        db.prepare(`
+          INSERT INTO error_log (level, message, context, occurred_at)
+          VALUES ('info', ?, 'AUDIT', ?)
+        `).run(`Venta creada: Folio ${folio} por $${total.toFixed(2)}`, now)
+
         return { invoiceId, folio, total }
       })
 
       return { ok: true, data: result }
     } catch (err: unknown) {
-      return { ok: false, error: String(err).replace('Error: ', '') }
+      const msg = String(err).replace('Error: ', '')
+      try {
+        getDb().prepare("INSERT INTO error_log (level, message, context, occurred_at) VALUES ('warn', ?, 'POS', ?)")
+          .run(`Fallo al crear venta: ${msg}`, nowISO())
+      } catch (_) {}
+      return { ok: false, error: msg }
     }
   })
 
@@ -275,6 +286,11 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
             `).run(inv.register_id, pmt.payment_method, pmt.amount, `Cancelación #${id}`, id, now)
           }
         }
+
+        db.prepare(`
+          INSERT INTO error_log (level, message, context, occurred_at)
+          VALUES ('info', ?, 'AUDIT', ?)
+        `).run(`Venta cancelada: ID ${id}. Motivo: ${reason || 'Sin motivo'}`, now)
       })
       return { ok: true }
     } catch (err: unknown) { return { ok: false, error: String(err) } }
