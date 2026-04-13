@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron'
 import { app, dialog } from 'electron'
 import fs from 'fs'
 import path from 'path'
+import Database from 'better-sqlite3'
 import { logger } from '../logger'
 import { getDb, closeDatabase, initDatabase } from '../../database/database'
 import { nowISO } from '../../database/dbUtils'
@@ -120,6 +121,20 @@ export function registerAppHandlers(ipcMain: IpcMain) {
       if (canceled || filePaths.length === 0) return { ok: false, error: 'Cancelado' }
       const newPath = filePaths[0]
 
+      // 0. VALIDACIÓN ESTRUCTURAL (Check de Luma App)
+      try {
+        const tempDb = new Database(newPath, { readonly: true })
+        // Verificar si existe la tabla schema_version y tiene un valor válido
+        const check = tempDb.prepare("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1").get() as { version: number } | undefined
+        tempDb.close()
+        
+        if (!check || typeof check.version !== 'number') {
+          return { ok: false, error: 'El archivo no contiene una base de datos válida de Luma App (Firma faltante).' }
+        }
+      } catch (err) {
+        return { ok: false, error: 'El archivo no es una base de datos SQLite válida o está protegido.' }
+      }
+
       // 1. Log en la DB actual (Auditoría de "Inicio de Importación")
       const now = nowISO()
       try {
@@ -195,6 +210,36 @@ export function registerAppHandlers(ipcMain: IpcMain) {
     } catch (err) {
       logger.error('DB health check failed', err)
       return { ready: false }
+    }
+  })
+
+  ipcMain.handle('app:selectImageFile', async () => {
+    try {
+      const result = await dialog.showOpenDialog({
+        title: 'Seleccionar logo del salón',
+        filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+        properties: ['openFile'],
+      })
+      if (result.canceled || result.filePaths.length === 0) return { ok: false }
+      return { ok: true, path: result.filePaths[0] }
+    } catch (err: any) {
+      return { ok: false, error: String(err) }
+    }
+  })
+  ipcMain.handle('app:readImageAsBase64', async (_e, filePath: string) => {
+    try {
+      const fs   = await import('fs')
+      const path = await import('path')
+      const ext  = path.extname(filePath).toLowerCase().replace('.', '')
+      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                : ext === 'png'  ? 'image/png'
+                : ext === 'webp' ? 'image/webp'
+                : 'image/jpeg'
+      const buffer = fs.readFileSync(filePath)
+      const base64 = buffer.toString('base64')
+      return { ok: true, data: `data:${mime};base64,${base64}` }
+    } catch (err: any) {
+      return { ok: false, error: String(err) }
     }
   })
 }

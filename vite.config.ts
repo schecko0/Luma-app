@@ -11,16 +11,20 @@ const NODE_BUILTINS = [
   'electron',
   'better-sqlite3',
   'googleapis',
-  // Node.js built-ins usados por googleapis y otros módulos nativos
+  // Node.js built-ins
   'path', 'fs', 'os', 'crypto', 'url', 'http', 'https',
   'http2', 'net', 'tls', 'zlib', 'stream', 'events',
   'buffer', 'util', 'assert', 'querystring', 'string_decoder',
   'child_process', 'worker_threads',
-  // googleapis sub-paquetes que pueden importarse directamente
-  'google-auth-library',
-  'gaxios',
-  'gcp-metadata',
-  'google-p12-pem',
+  // googleapis
+  'google-auth-library', 'gaxios', 'gcp-metadata', 'google-p12-pem',
+  // whatsapp-web.js y sus dependencias nativas
+  'whatsapp-web.js',
+  'puppeteer',
+  'ws',
+  'bufferutil',
+  'utf-8-validate',
+  'node-cron',
 ]
 
 export default defineConfig({

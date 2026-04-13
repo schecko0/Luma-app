@@ -1,8 +1,11 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'path'
-import { initDatabase } from '../database/database'
+import { getDb, initDatabase } from '../database/database'
 import { registerAllHandlers } from './ipc/handlers'
-import { setupLogger } from './logger'
+import { logger, setupLogger } from './logger'
+import { startSyncWorker } from './ipc/calendarHandlers'
+import { initWhatsAppClient } from './whatsappService'
+
 
 const isDev = !app.isPackaged
 
@@ -63,6 +66,15 @@ app.whenReady().then(async () => {
   }
 
   registerAllHandlers(ipcMain)
+  startSyncWorker()
+  try {
+    const row = getDb().prepare("SELECT value FROM settings WHERE key='wa_enabled'").get() as { value: string } | undefined
+    if (row?.value === 'true') {
+      initWhatsAppClient().catch(err => logger.warn('[Main] WhatsApp reconexión fallida:', err))
+    }
+  } catch (err) {
+    logger.warn('[Main] No se pudo reconectar WhatsApp:', err)
+  }
   await createWindow()
 
   app.on('activate', async () => {

@@ -1,5 +1,8 @@
 # Dependencias
 node_modules/
+release/
+*.db
+luma.log
 .vite/
 #dist/
 build/
@@ -27,3 +30,10 @@ yarn-error.log*
 *.njsproj
 *.sln
 *.sw?
+
+# WhatsApp Web — sesión local (contiene tokens de autenticación, no debe subirse)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Build output — se regenera con npm run build
+dist/

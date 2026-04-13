@@ -1,4 +1,6 @@
 import type { IpcMain } from 'electron'
+// Al inicio del archivo, junto a los otros imports:
+import { registerWhatsAppHandlers } from './whatsappHandlers'
 import { registerAppHandlers }          from './appHandlers'
 import { registerEmployeeHandlers }     from './employeeHandlers'
 import { registerServiceHandlers }      from './serviceHandlers'
@@ -22,4 +24,5 @@ export function registerAllHandlers(ipcMain: IpcMain) {
   registerSettingsHandlers(ipcMain)
   registerDashboardHandlers(ipcMain)
   registerCalendarHandlers(ipcMain)
+  registerWhatsAppHandlers(ipcMain)
 }

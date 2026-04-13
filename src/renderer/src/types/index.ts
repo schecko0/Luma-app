@@ -255,3 +255,52 @@ export interface ErrorLog {
   context: string | null
   occurred_at: string
 }
+
+// ── WhatsApp ──────────────────────────────────────────────────────────────────
+export type WAReminderType = '1d' | '3d' | '7d' | 'manual'
+export type WAMessageStatus = 'pending' | 'sent' | 'failed' | 'skipped'
+
+export interface WhatsAppReminderLog {
+  id: number
+  appointment_id: number
+  client_id: number | null
+  phone: string
+  reminder_type: WAReminderType
+  message_preview: string
+  status: WAMessageStatus
+  error_message: string | null
+  sent_at: string | null
+  created_at: string
+  // JOINs
+  client_name?: string
+  appointment_title?: string
+  start_at?: string
+}
+
+export interface WAPreviewItem {
+  appointmentId: number
+  clientId: number | null
+  clientName: string | null
+  phone: string | null
+  status: 'ready' | 'sent_today' | 'skipped_no_phone' | 'skipped_no_template' | 'skipped_no_client'
+  message: string | null
+  sentToday: boolean        // ← nuevo
+  lastSentAt: string | null // ← nuevo
+  meta: { startAt: string; employeeName: string; serviceName: string } | null
+}
+
+export interface WAPreviewResult {
+  items: WAPreviewItem[]
+  summary: {
+    total: number
+    ready: number
+    sent_today: number
+    skipped_no_phone: number
+    skipped_no_template: number
+    skipped_no_client: number
+  }
+  template: string
+  sentToday: number
+  maxPerDay: number
+  willExceedLimit: boolean
+}

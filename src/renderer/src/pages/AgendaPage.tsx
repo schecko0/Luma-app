@@ -3,6 +3,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, Plus,
   Wifi, WifiOff, Settings2, AlertCircle, Check, Loader2,
   Calendar, LayoutGrid, LogOut, RefreshCw, Bell, BellOff,
+  Cloud, CloudOff, CloudAlert, Link2,MessageCircle
 } from 'lucide-react'
 import type { Appointment, Employee } from '../types'
 import { PageHeader, Spinner, Badge } from '../components/ui/index'
@@ -12,7 +13,9 @@ import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   addDays, addWeeks, addMonths, subWeeks, subMonths,
   format, isSameDay, isSameMonth, parseISO, isToday,
+  startOfDay, endOfDay,
 } from 'date-fns'
+import { WhatsAppPreviewModal } from '../components/agenda/WhatsAppPreviewModal'
 import { es } from 'date-fns/locale'
 
 const GC_HEX: Record<string, string> = {
@@ -20,29 +23,61 @@ const GC_HEX: Record<string, string> = {
   sage: '#33b679', basil: '#0f9d58', peacock: '#039be5', blueberry: '#3f51b5',
   lavender: '#7986cb', grape: '#8d24aa', graphite: '#616161',
 }
-const aptColor = (apt: Appointment) =>
-  GC_HEX[apt.color ?? ''] ?? GC_HEX[apt.employee_color ?? ''] ?? 'var(--color-accent)'
+
+const getSyncIcon = (status: string) => {
+  switch (status) {
+    case 'synced':       return <Cloud size={10} className="text-white/80" />
+    case 'pending_sync': return <RefreshCw size={10} className="text-white/80 animate-spin-slow" />
+    case 'local':        return <CloudOff size={10} className="text-white/60" />
+    default:             return <CloudAlert size={10} className="text-white" />
+  }
+}
+
+const aptColor = (apt: Appointment) => {
+  // Si no tiene empleado asignado, es un evento externo o sin asignar
+  if (!apt.employee_id && !apt.color) return '#4b5563' // Gris oscuro (Zinc 600)
+  return GC_HEX[apt.color ?? ''] ?? GC_HEX[apt.employee_color ?? ''] ?? 'var(--color-accent)'
+}
 
 type CalView = 'week' | 'month'
 interface GcStatus { connected: boolean; has_credentials: boolean; connected_at: string | null; calendar_id: string }
 
-// ── Sonido de alerta (beep sintético con Web Audio API) ──────────────────────
-function playAlertSound(times = 2) {
+// ── Sistema de Alertas (Voz, Notificaciones y Sonido) ────────────────────────
+function playChime() {
   try {
-    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
-    let t = ctx.currentTime
-    for (let i = 0; i < times; i++) {
-      const osc  = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain); gain.connect(ctx.destination)
-      osc.frequency.value = 880
-      osc.type = 'sine'
-      gain.gain.setValueAtTime(0.4, t)
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4)
-      osc.start(t); osc.stop(t + 0.4)
-      t += 0.55
-    }
-  } catch (_) { /* Silencioso si el navegador no soporta AudioContext */ }
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const now = ctx.currentTime
+    const osc1 = ctx.createOscillator(); const osc2 = ctx.createOscillator()
+    const gain = ctx.createGain()
+    
+    osc1.frequency.setValueAtTime(523.25, now) // C5
+    osc2.frequency.setValueAtTime(659.25, now) // E5
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.1)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
+    
+    osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination)
+    osc1.start(now); osc2.start(now); osc1.stop(now + 1.5); osc2.stop(now + 1.5)
+  } catch (_) {}
+}
+
+function speakAlert(text: string) {
+  if (!window.speechSynthesis) return
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = 'es-MX'
+  utterance.rate = 0.9 // Un poco más lento para que sea claro
+  utterance.pitch = 1
+  window.speechSynthesis.speak(utterance)
+}
+
+function showDesktopNotification(title: string, body: string) {
+  if (Notification.permission === 'granted') {
+    new Notification(title, { body, icon: '/favicon.ico' })
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') new Notification(title, { body })
+    })
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,9 +92,12 @@ export const AgendaPage: React.FC = () => {
   const [disconnecting, setDisconn]   = useState(false)
   const [gcStatus, setGcStatus]       = useState<GcStatus>({ connected: false, has_credentials: false, connected_at: null, calendar_id: 'primary' })
   const [toast, setToast]             = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const [waBulkOpen, setWaBulkOpen]   = useState(false)
+  const [waBulkIds, setWaBulkIds]     = useState<number[]>([])
   const [modalOpen, setModalOpen]     = useState(false)
   const [editingApt, setEditingApt]   = useState<Appointment | null>(null)
   const [defaultStart, setDefStart]   = useState<string | undefined>()
+
   // Modal de confirmación de cancelación (reemplaza window.confirm)
   const [cancelConfirm, setCancelConfirm] = useState<{ onConfirm: () => void } | null>(null)
   // Alertas sonoras
@@ -85,6 +123,9 @@ export const AgendaPage: React.FC = () => {
     }
   }, [current, view])
 
+
+  
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
@@ -104,12 +145,31 @@ export const AgendaPage: React.FC = () => {
     } finally { setLoading(false) }
   }, [rangeFrom, rangeTo])
 
-  useEffect(() => { loadAll() }, [loadAll])
+  // 1. Carga inicial y cambios de rango (view/current)
+  useEffect(() => { 
+    loadAll() 
+  }, [rangeFrom, rangeTo]) // Solo recargar si cambia el rango visible
+
+  // 2. Listener de actualizaciones de fondo (Sync Worker)
+  useEffect(() => {
+    const unsub = window.electronAPI.calendar.onCalendarUpdated(() => {
+      // Solo disparar carga si NO está ya cargando (evita solapamientos)
+      if (!loading) {
+        loadAll()
+      }
+    })
+    return () => unsub()
+  }, [loadAll, loading]) // Ahora depende de loading para saber cuándo saltar
 
   // ── Motor de alertas sonoras ──────────────────────────────────────────────
   useEffect(() => {
     if (alertTimerRef.current) clearInterval(alertTimerRef.current)
-    if (!alertsEnabled) return
+    
+    if (!alertsEnabled) {
+      // SILENCIAR VOZ SI SE DESACTIVAN ALERTAS
+      if (window.speechSynthesis) window.speechSynthesis.cancel()
+      return
+    }
 
     const checkAlerts = () => {
       const now    = new Date()
@@ -117,23 +177,24 @@ export const AgendaPage: React.FC = () => {
       for (const apt of apts) {
         const start     = new Date(apt.start_at)
         const diffMs    = start.getTime() - now.getTime()
-        const diffMin   = diffMs / 60000
+        const diffMin   = Math.round(diffMs / 60000)
 
-        // Alerta a los 15 minutos antes (ventana de ±30s)
-        const key15 = `${apt.id}-15`
-        if (diffMin >= 14.5 && diffMin <= 15.5 && !alertedIds.current.has(parseInt(`${apt.id}15`))) {
-          alertedIds.current.add(parseInt(`${apt.id}15`))
-          playAlertSound(2)
-          showToast(`🔔 Cita en 15 min: ${apt.title}`, 'success')
-        }
+        // Ventana de aviso: Justo a los 15 y 5 minutos antes
+        if ((diffMin === 15 || diffMin === 5) && !alertedIds.current.has(parseInt(`${apt.id}${diffMin}`))) {
+          alertedIds.current.add(parseInt(`${apt.id}${diffMin}`))
+          
+          // 1. Sonido suave
+          playChime()
 
-        // Recordatorio cada 5 min entre 0 y 15 min antes
-        const minuteKey = Math.floor(diffMin)
-        const keyN = `${apt.id}-${minuteKey}`
-        if (diffMin > 0 && diffMin < 15 && minuteKey % 5 === 0 && !alertedIds.current.has(parseInt(keyN.replace('-', '')))) {
-          alertedIds.current.add(parseInt(keyN.replace('-', '')))
-          playAlertSound(1)
-          showToast(`⏰ Cita en ${minuteKey} min: ${apt.title}`, 'success')
+          // 2. Notificación Visual
+          const body = `${apt.service_name || apt.title} ${apt.client_name ? 'para ' + apt.client_name : ''}`
+          showDesktopNotification(`Cita en ${diffMin} min`, body)
+
+          // 3. Alerta de VOZ
+          const voiceText = `Cita en ${diffMin} minutos: ${apt.service_name || apt.title} ${apt.client_name ? 'para ' + apt.client_name : ''}`
+          speakAlert(voiceText)
+          
+          showToast(`🔔 ${voiceText}`, 'success')
         }
       }
     }
@@ -175,12 +236,32 @@ export const AgendaPage: React.FC = () => {
     setSyncing(true)
     try {
       const res = await window.electronAPI.calendar.sync()
-      if (!res.ok) { showToast(res.error ?? 'Error al sincronizar', 'error'); return }
+      if (!res.ok) { 
+        showToast(res.error ?? 'Error al sincronizar', 'error')
+        // Forzar recarga de estado para detectar si se desconectó por error
+        await loadAll()
+        return 
+      }
       const { synced, errors } = res.data as { synced: number; errors: number }
       showToast(errors > 0 ? `${synced} sincronizadas · ${errors} errores` : `${synced} citas sincronizadas`)
-      loadAll()
-    } catch (e) { showToast(String(e), 'error') }
+      await loadAll()
+    } catch (e) { 
+      showToast(String(e), 'error')
+      await loadAll()
+    }
     finally { setSyncing(false) }
+  }
+
+  const openWaBulk = async () => {
+    const tomorrow = format(addDays(new Date(), 1), 'yyyy-MM-dd')
+    const res = await window.electronAPI.calendar.listAppointments(tomorrow, tomorrow)
+    if (res.ok) {
+      const ids = (res.data as Appointment[])
+        .filter((a: Appointment) => a.client_id !== null)
+        .map((a: Appointment) => a.id)
+      setWaBulkIds(ids)
+      setWaBulkOpen(true)
+    }
   }
 
   const periodLabel = view === 'week'
@@ -220,7 +301,11 @@ export const AgendaPage: React.FC = () => {
               style={{ color: alertsEnabled ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
               {alertsEnabled ? <Bell size={16} /> : <BellOff size={16} />}
             </button>
-
+            <button onClick={openWaBulk} className="luma-btn-ghost text-xs flex items-center gap-1.5"
+                    style={{ color: 'var(--color-accent)' }}
+                    title="Enviar recordatorios WhatsApp para citas de mañana">
+              <MessageCircle size={14} /> Recordatorios mañana
+            </button>
             <button onClick={() => openNew()} className="luma-btn-primary text-xs">
               <Plus size={14} /> Nueva cita
             </button>
@@ -289,6 +374,13 @@ export const AgendaPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+      <WhatsAppPreviewModal
+        isOpen={waBulkOpen}
+        onClose={() => setWaBulkOpen(false)}
+        appointmentIds={waBulkIds}
+        reminderType="1d"
+        contextLabel={`Citas del ${format(addDays(new Date(), 1), 'd MMM yyyy', { locale: es })}`}
+      />
     </div>
   )
 }
@@ -355,6 +447,70 @@ const ConnectionBanner: React.FC<{
   )
 }
 
+// ── Algoritmo de detección de solapamientos ───────────────────────────────────
+// Retorna cada cita con { colIndex, colCount } para posicionarlas lado a lado
+interface AptLayout extends Appointment {
+  colIndex: number
+  colCount: number
+}
+
+function computeLayout(apts: Appointment[]): AptLayout[] {
+  // Ordenar por inicio
+  const sorted = [...apts].sort((a, b) =>
+    new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
+  )
+
+  const result: AptLayout[] = []
+  // Grupos de citas que se solapan entre sí
+  let group: Appointment[] = []
+  let groupEnd = new Date(0)
+
+  const processGroup = (g: Appointment[]) => {
+    // Construir columnas: asignar cada cita a la primer columna libre
+    const cols: Appointment[][] = []
+    for (const apt of g) {
+      const aptStart = new Date(apt.start_at)
+      const aptEnd   = new Date(apt.end_at)
+      let placed = false
+      for (const col of cols) {
+        const lastInCol = col[col.length - 1]
+        if (new Date(lastInCol.end_at) <= aptStart) {
+          col.push(apt); placed = true; break
+        }
+      }
+      if (!placed) cols.push([apt])
+    }
+    const colCount = cols.length
+    cols.forEach((col, ci) => {
+      col.forEach(apt => {
+        result.push({ ...apt, colIndex: ci, colCount })
+      })
+    })
+  }
+
+  for (const apt of sorted) {
+    const aptStart = new Date(apt.start_at)
+    const aptEnd   = new Date(apt.end_at)
+
+    if (group.length === 0) {
+      group.push(apt)
+      groupEnd = aptEnd
+    } else if (aptStart < groupEnd) {
+      // Se solapa con el grupo actual
+      group.push(apt)
+      if (aptEnd > groupEnd) groupEnd = aptEnd
+    } else {
+      // Nuevo grupo — procesar el anterior
+      processGroup(group)
+      group = [apt]
+      groupEnd = aptEnd
+    }
+  }
+  if (group.length > 0) processGroup(group)
+
+  return result
+}
+
 // ── Vista semanal ─────────────────────────────────────────────────────────────
 const HOURS  = Array.from({ length: 15 }, (_, i) => i + 7)
 const HOUR_H = 56
@@ -366,12 +522,27 @@ const WeekView: React.FC<{
   const weekStart = startOfWeek(current, { weekStartsOn: 1 })
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
-  const aptsByDay = (day: Date) => appointments.filter(a => isSameDay(parseISO(a.start_at), day))
-  const aptTop    = (apt: Appointment) => { const d = parseISO(apt.start_at); return ((d.getHours() - 7) + d.getMinutes() / 60) * HOUR_H }
-  const aptHeight = (apt: Appointment) => Math.max(((new Date(apt.end_at).getTime() - new Date(apt.start_at).getTime()) / 60000 / 60) * HOUR_H, 24)
+  const aptTop    = (apt: Appointment) => {
+    const d = parseISO(apt.start_at)
+    return ((d.getHours() - 7) + d.getMinutes() / 60) * HOUR_H
+  }
+  const aptHeight = (apt: Appointment) =>
+    Math.max(
+      ((new Date(apt.end_at).getTime() - new Date(apt.start_at).getTime()) / 60000 / 60) * HOUR_H,
+      24
+    )
+
+  // Pre-calcular layout por día (columnas de solapamiento)
+  const layoutsByDay = useMemo(() => {
+    return days.map(day => {
+      const dayApts = appointments.filter(a => isSameDay(parseISO(a.start_at), day))
+      return computeLayout(dayApts)
+    })
+  }, [appointments, days])
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* Columna de horas */}
       <div className="flex-shrink-0 w-14 overflow-hidden" style={{ paddingTop: 40 }}>
         <div style={{ position: 'relative', height: HOURS.length * HOUR_H }}>
           {HOURS.map(h => (
@@ -382,7 +553,9 @@ const WeekView: React.FC<{
           ))}
         </div>
       </div>
+
       <div className="flex-1 overflow-auto">
+        {/* Header de días */}
         <div className="grid grid-cols-7 sticky top-0 z-10 border-b"
              style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', height: 40 }}>
           {days.map(day => (
@@ -399,29 +572,107 @@ const WeekView: React.FC<{
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-7" style={{ position: 'relative', height: HOURS.length * HOUR_H }}>
+
+        {/* Grid de horas + citas */}
+        <div className="grid grid-cols-7"
+             style={{ position: 'relative', height: HOURS.length * HOUR_H }}>
+
+          {/* Celdas de fondo (clickeables para crear cita) */}
           {HOURS.map(h => (
             <React.Fragment key={h}>
               {days.map((_, di) => (
                 <div key={di} className="border-r border-b"
-                  style={{ position: 'absolute', left: `${(di/7)*100}%`, top: (h-7)*HOUR_H, width: `${100/7}%`, height: HOUR_H, borderColor: 'var(--color-border)', cursor: 'pointer' }}
-                  onClick={() => { const d = new Date(days[di]); d.setHours(h,0,0,0); onClickSlot(d.toISOString()) }} />
+                  style={{
+                    position: 'absolute',
+                    left: `${(di / 7) * 100}%`,
+                    top: (h - 7) * HOUR_H,
+                    width: `${100 / 7}%`,
+                    height: HOUR_H,
+                    borderColor: 'var(--color-border)',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => {
+                    const d = new Date(days[di])
+                    d.setHours(h, 0, 0, 0)
+                    onClickSlot(d.toISOString())
+                  }}
+                />
               ))}
             </React.Fragment>
           ))}
-          {days.map((day, di) =>
-            aptsByDay(day).map(apt => (
-              <div key={apt.id}
-                onClick={e => { e.stopPropagation(); onClickApt(apt) }}
-                className="absolute rounded-lg px-1.5 py-1 text-white text-xs cursor-pointer overflow-hidden shadow-sm hover:opacity-90 transition-opacity"
-                style={{ left: `calc(${(di/7)*100}% + 2px)`, width: `calc(${100/7}% - 4px)`, top: aptTop(apt), height: aptHeight(apt), background: aptColor(apt), zIndex: 2 }}>
-                <p className="font-medium truncate leading-tight">{apt.title}</p>
-                {apt.client_name && <p className="opacity-80 truncate leading-tight">{apt.client_name}</p>}
-                <p className="opacity-70 leading-tight">{format(parseISO(apt.start_at), 'H:mm')}–{format(parseISO(apt.end_at), 'H:mm')}</p>
-                {apt.sync_status === 'synced' && <span className="absolute top-0.5 right-0.5 opacity-70">☁</span>}
-              </div>
-            ))
-          )}
+
+          {/* Citas con layout de columnas */}
+          {days.map((_, di) => {
+            const dayLayouts = layoutsByDay[di]
+            // Ancho de la columna del día en porcentaje del total (1/7)
+            const dayLeftPct  = (di / 7) * 100
+            const dayWidthPct = 100 / 7
+
+            return dayLayouts.map((apt) => {
+              const PADDING  = 3   // px de margen entre citas
+              const colW     = (dayWidthPct / apt.colCount)   // % del total
+              const aptLeft  = dayLeftPct + colW * apt.colIndex
+              const aptWidth = colW
+
+              return (
+                <div
+                  key={apt.id}
+                  onClick={e => { e.stopPropagation(); onClickApt(apt) }}
+                  className="absolute rounded-lg px-2 py-1.5 text-white text-xs cursor-pointer overflow-hidden shadow-md hover:brightness-110 transition-all flex flex-col gap-0.5 border border-white/10"
+                  style={{
+                    left:       `calc(${aptLeft}% + ${PADDING}px)`,
+                    width:      `calc(${aptWidth}% - ${PADDING * 2}px)`,
+                    top:        aptTop(apt) + 2,
+                    height:     aptHeight(apt) - 4,
+                    background: aptColor(apt),
+                    zIndex:     2,
+                    // Resaltar al hover sin afectar vecinos
+                    transition: 'filter 0.15s, box-shadow 0.15s',
+                  }}
+                  title={`${apt.title}${apt.client_name ? ' — ' + apt.client_name : ''}${apt.employee_name ? ' · ' + apt.employee_name : ''}`}
+                >
+                  {/* Header: sync icon + hora */}
+                  <div className="flex items-center justify-between mb-0.5">
+                    <div className="flex gap-1 items-center">
+                      {getSyncIcon(apt.sync_status)}
+                      {!apt.employee_id && (
+                        <span title="Evento externo no vinculado">
+                          <Link2 size={10} className="text-white/70" />
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[9px] font-bold opacity-70 whitespace-nowrap">
+                      {format(parseISO(apt.start_at), 'H:mm')}
+                    </span>
+                  </div>
+
+                  <p className="font-bold truncate leading-tight text-[11px] drop-shadow-sm">
+                    {apt.title}
+                  </p>
+
+                  {apt.client_name && (
+                    <p className="opacity-90 truncate leading-none text-[10px] font-medium italic">
+                      • {apt.client_name}
+                    </p>
+                  )}
+
+                  {/* Mostrar empleado solo si hay espacio (cita alta y columna no muy angosta) */}
+                  {aptHeight(apt) > 45 && apt.colCount <= 2 && apt.employee_name && (
+                    <p className="mt-auto opacity-70 truncate text-[9px] uppercase tracking-wider font-semibold">
+                      {apt.employee_name.split(' ')[0]}
+                    </p>
+                  )}
+
+                  {/* Si la columna es muy angosta (3+ solapamientos) mostrar solo hora */}
+                  {apt.colCount >= 3 && (
+                    <p className="text-[9px] opacity-60 truncate">
+                      {format(parseISO(apt.end_at), 'H:mm')}
+                    </p>
+                  )}
+                </div>
+              )
+            })
+          })}
         </div>
       </div>
     </div>
@@ -484,6 +735,7 @@ const MonthView: React.FC<{
           </div>
         ))}
       </div>
+      
     </div>
   )
 }

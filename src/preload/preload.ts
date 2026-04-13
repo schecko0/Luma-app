@@ -17,6 +17,8 @@ const api = {
   getErrorLogs: (page?: number, pageSize?: number) => ipcRenderer.invoke('app:getErrorLogs', page, pageSize),
   exportDb:     () => ipcRenderer.invoke('app:exportDb'),
   importDb:     () => ipcRenderer.invoke('app:importDb'),
+  selectImageFile: () => ipcRenderer.invoke('app:selectImageFile'),
+  readImageAsBase64: (filePath: string) => ipcRenderer.invoke('app:readImageAsBase64', filePath),
 
   // ── EMPLEADOS ─────────────────────────────────────────────────────────
   employees: {
@@ -125,6 +127,38 @@ const api = {
     }>) => ipcRenderer.invoke('calendar:updateAppointment', id, data),
     cancelAppointment:  (id: number) => ipcRenderer.invoke('calendar:cancelAppointment', id),
     sync:               () => ipcRenderer.invoke('calendar:sync'),
+    onCalendarUpdated:  (cb: () => void) => {
+      const wrapped = () => cb()
+      ipcRenderer.on('calendar:updated', wrapped)
+      return () => ipcRenderer.removeListener('calendar:updated', wrapped)
+    },
+  },
+
+  whatsapp: {
+    getStatus:        () => ipcRenderer.invoke('whatsapp:getStatus'),
+    connect:          () => ipcRenderer.invoke('whatsapp:connect'),
+    disconnect:       () => ipcRenderer.invoke('whatsapp:disconnect'),
+    preview:          (ids: number[], type: '1d'|'3d'|'7d'|'manual') => ipcRenderer.invoke('whatsapp:preview', ids, type),
+    sendBulk:         (ids: number[], type: '1d'|'3d'|'7d'|'manual', forcedIds?: number[]) => ipcRenderer.invoke('whatsapp:sendBulk', ids, type, forcedIds ?? []),
+    sendOne:          (id: number, type: '1d'|'3d'|'7d'|'manual')    => ipcRenderer.invoke('whatsapp:sendOne', id, type),
+    getLog:           (page?: number, pageSize?: number)              => ipcRenderer.invoke('whatsapp:getLog', page, pageSize),
+    getStats:         () => ipcRenderer.invoke('whatsapp:getStats'),
+    restartScheduler: () => ipcRenderer.invoke('whatsapp:restartScheduler'),
+    sendConfirmation: (appointmentId: number) =>  ipcRenderer.invoke('whatsapp:sendConfirmation', appointmentId),
+    onStatus:  (cb: (data: { status: string; phone?: string; error?: string }) => void) => {
+      const wrapped = (_: any, data: any) => cb(data)
+      ipcRenderer.on('whatsapp:status', wrapped)
+      return () => ipcRenderer.removeListener('whatsapp:status', wrapped)
+    },
+    onQr: (cb: (data: { qr: string }) => void) => {
+      const wrapped = (_: any, data: any) => cb(data)
+      ipcRenderer.on('whatsapp:qr', wrapped)
+      return () => ipcRenderer.removeListener('whatsapp:qr', wrapped)
+    },
+    onQueueDone: (cb: () => void) => {
+      ipcRenderer.on('whatsapp:queueDone', () => cb())
+      return () => ipcRenderer.removeListener('whatsapp:queueDone', () => cb())
+    },
   },
 }
 

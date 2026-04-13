@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Save, Loader2, Trash2, Clock, User, UserRound, Scissors, AlignLeft, X, Search } from 'lucide-react'
+import { Save, Loader2, Trash2, Clock, User, UserRound, Scissors, AlignLeft, X, Search,MessageCircle } from 'lucide-react'
 import type { Employee, Client, Service, Appointment } from '../../types'
 import { Modal } from '../ui/Modal'
 import { Spinner } from '../ui/index'
+import { WhatsAppPreviewModal } from './WhatsAppPreviewModal'
 
 // ── Colores de Google Calendar ────────────────────────────────────────────────
 const GC_HEX: Record<string, string> = {
@@ -175,6 +176,7 @@ export const AppointmentModal: React.FC<Props> = ({
   const [deleting, setDeleting] = useState(false)
   const [error, setError]       = useState<string | null>(null)
   const [endDayWarning, setEndDayWarning] = useState(false)
+  const [waPreviewOpen, setWaPreviewOpen] = useState(false)
 
   // Cargar clientes y servicios
   useEffect(() => {
@@ -312,10 +314,23 @@ export const AppointmentModal: React.FC<Props> = ({
         ? await window.electronAPI.calendar.updateAppointment(initial.id, payload)
         : await window.electronAPI.calendar.createAppointment(payload)
 
-      if (!res.ok) { setError(res.error ?? 'Error al guardar'); return }
-      onSaved(); onClose()
-    } catch (e) { setError(String(e)) }
-    finally { setSaving(false) }
+      if (res.ok) {
+        
+        // Si es cita nueva, intentar enviar confirmación por WA (fire-and-forget)
+        if (!initial && res.data?.id) {
+          window.electronAPI.whatsapp.sendConfirmation(res.data.id)
+            .catch(() => {}) // silencioso — no bloquea el flujo
+        }
+        // CIERRE INMEDIATO Y REFRESCO DE AGENDA
+        onSaved(); onClose()
+      } else {
+        setError(res.error ?? 'Error al guardar')
+      }
+    } catch (e) { 
+      setError(String(e)) 
+    } finally { 
+      setSaving(false) 
+    }
   }
 
   // Cancelar cita — usa modal personalizado en lugar de window.confirm
@@ -471,6 +486,14 @@ export const AppointmentModal: React.FC<Props> = ({
                 Cancelar cita
               </button>
             )}
+            {initial && initial.client_id && new Date(initial.start_at) > new Date() && (
+                <button onClick={() => setWaPreviewOpen(true)}
+                className="luma-btn text-xs flex items-center gap-1.5"
+                style={{ color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}
+                title="Enviar recordatorio por WhatsApp">
+                <MessageCircle size={13} /> WhatsApp
+              </button>
+            )}
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="luma-btn-ghost">Cerrar</button>
@@ -480,6 +503,13 @@ export const AppointmentModal: React.FC<Props> = ({
           </div>
         </div>
       </div>
+      <WhatsAppPreviewModal
+        isOpen={waPreviewOpen}
+        onClose={() => setWaPreviewOpen(false)}
+        appointmentIds={initial ? [initial.id] : []}
+        reminderType="manual"
+        contextLabel={initial?.title}
+      />
     </Modal>
   )
 }

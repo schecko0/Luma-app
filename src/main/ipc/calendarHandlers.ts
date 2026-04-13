@@ -1,8 +1,8 @@
-import type { IpcMain } from 'electron'
-import { shell } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { createServer } from 'http'
 import { URL } from 'url'
 import { google } from 'googleapis'
+import { logger } from '../logger'
 import { getDb } from '../../database/database'
 import { nowISO } from '../../database/dbUtils'
 import type { Appointment } from '../../renderer/src/types'
@@ -70,16 +70,27 @@ function getSalonCalendarId(): string {
 //
 // Si dateFrom/dateTo no se pasan, usa: hoy-7d hasta hoy+365d (un año).
 // ─────────────────────────────────────────────────────────────────────────────
+// Semáforo para evitar múltiples pulls simultáneos
+let isPullingFromGoogle = false
+
 async function pullFromGoogle(
   oauth2:   ReturnType<typeof buildOAuthClient>,
   dateFrom?: string,   // 'YYYY-MM-DD' — límite inferior del rango
   dateTo?:   string,   // 'YYYY-MM-DD' — límite superior del rango
 ): Promise<{ imported: number; updated: number }> {
 
+  if (isPullingFromGoogle) {    
+    return { imported: 0, updated: 0 }
+  }
+
+  isPullingFromGoogle = true
   const db    = getDb()
   const cal   = google.calendar({ version: 'v3', auth: oauth2 })
   const calId = getSalonCalendarId()
   const now   = nowISO()
+
+  try {
+    // ... (resto del código del pull que ya actualizamos)
 
   // Rango por defecto: últimos 7 días + próximos 365 días
   const from = dateFrom
@@ -93,62 +104,74 @@ async function pullFromGoogle(
   let updated     = 0
   let pageToken: string | undefined = undefined
 
+  // Preparar sentencias fuera del loop para velocidad
+  const selectStmt = db.prepare('SELECT id FROM appointments WHERE google_event_id = ?')
+  const updateStmt = db.prepare(`
+    UPDATE appointments SET
+      title = ?, start_at = ?, end_at = ?, description = ?,
+      sync_status = 'synced', last_synced_at = ?, updated_at = ?
+    WHERE google_event_id = ?
+  `)
+  const insertStmt = db.prepare(`
+    INSERT INTO appointments
+      (google_event_id, title, description, start_at, end_at,
+       all_day, color, sync_status, last_synced_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?)
+  `)
+
   // ── Paginación: seguir nextPageToken hasta agotar resultados ─────────
   do {
+  
     const resp = await cal.events.list({
       calendarId:    calId,
       timeMin:       from.toISOString(),
       timeMax:       to.toISOString(),
       singleEvents:  true,
       orderBy:       'startTime',
-      maxResults:    500,           // máx por página (API permite hasta 2500)
-      pageToken,                    // undefined en la primera iteración
+      maxResults:    250,           // Reducimos un poco el lote para mayor fluidez
+      pageToken,
     })
 
     pageToken = resp.data.nextPageToken ?? undefined
     const events = resp.data.items ?? []
 
-    for (const ev of events) {
-      if (!ev.id || !ev.summary) continue
-      if (ev.status === 'cancelled') continue
+    if (events.length > 0) {
+      // USAR TRANSACCIÓN PARA TODA LA PÁGINA (Ultra rápido)
+      const processBatch = db.transaction((evs) => {
+        for (const ev of evs) {
+          if (!ev.id || !ev.summary) continue
+          if (ev.status === 'cancelled') continue
 
-      const startAt = ev.start?.dateTime ?? (ev.start?.date ? ev.start.date + 'T00:00:00' : null)
-      const endAt   = ev.end?.dateTime   ?? (ev.end?.date   ? ev.end.date   + 'T00:00:00' : null)
-      if (!startAt || !endAt) continue
+          const startAt = ev.start?.dateTime ?? (ev.start?.date ? ev.start.date + 'T00:00:00' : null)
+          const endAt   = ev.end?.dateTime   ?? (ev.end?.date   ? ev.end.date   + 'T00:00:00' : null)
+          if (!startAt || !endAt) continue
 
-      const existing = db.prepare('SELECT id FROM appointments WHERE google_event_id = ?').get(ev.id)
+          const existing = selectStmt.get(ev.id)
 
-      if (existing) {
-        // Actualizar si el evento cambió en Google
-        db.prepare(`
-          UPDATE appointments SET
-            title = ?, start_at = ?, end_at = ?, description = ?,
-            sync_status = 'synced', last_synced_at = ?, updated_at = ?
-          WHERE google_event_id = ?
-        `).run(ev.summary, startAt, endAt, ev.description ?? null, now, now, ev.id)
-        updated++
-      } else {
-        // Insertar como nueva cita importada
-        db.prepare(`
-          INSERT INTO appointments
-            (google_event_id, title, description, start_at, end_at,
-             all_day, color, sync_status, last_synced_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?)
-        `).run(
-          ev.id, ev.summary, ev.description ?? null,
-          startAt, endAt,
-          ev.start?.date ? 1 : 0,
-          googleColorIdToName(ev.colorId ?? ''),
-          now, now, now,
-        )
-        imported++
-      }
+          if (existing) {
+            updateStmt.run(ev.summary, startAt, endAt, ev.description ?? null, now, now, ev.id)
+            updated++
+          } else {
+            insertStmt.run(
+              ev.id, ev.summary, ev.description ?? null,
+              startAt, endAt,
+              ev.start?.date ? 1 : 0,
+              googleColorIdToName(ev.colorId ?? ''),
+              now, now, now,
+            )
+            imported++
+          }
+        }
+      })
+      processBatch(events)
     }
-  } while (pageToken) // continuar mientras haya más páginas
+  } while (pageToken)
 
   return { imported, updated }
-}
-
+  } finally {
+  isPullingFromGoogle = false
+  }
+  }
 // ─────────────────────────────────────────────────────────────────────────────
 // pushToGoogle — crea o actualiza un evento en Google
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,6 +258,112 @@ function googleColorIdToName(id: string): string {
 function colorNameToGoogleId(name: string | null | undefined): string | undefined {
   const m: Record<string, string> = { lavender:'1',sage:'2',grape:'3',flamingo:'4',banana:'5',tangerine:'6',peacock:'7',graphite:'8',blueberry:'9',basil:'10',tomato:'11' }
   return name ? m[name] : undefined
+}
+
+function isInvalidGrantError(err: any): boolean {
+  const msg = err.message || ''
+  const data = err.response?.data?.error || ''
+  return (
+    msg.includes('invalid_grant') || 
+    msg.includes('No access, refresh token or API key') ||
+    data === 'invalid_grant' ||
+    (typeof data === 'string' && data.includes('invalid_grant'))
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync Queue Motor — Procesa tareas pendientes en segundo plano
+// ─────────────────────────────────────────────────────────────────────────────
+let isProcessingQueue = false
+
+export async function startSyncWorker() {
+  // Ejecutar cada 1 minuto (o al detectar cambio de red)
+  setInterval(() => {
+    processSyncQueue().catch(err => logger.error('Sync Worker Error', err))
+  }, 60_000)
+  
+  // Primera ejecución inmediata tras 5 segundos del arranque
+  setTimeout(() => processSyncQueue(), 5000)
+}
+
+async function processSyncQueue(): Promise<void> {
+  if (isProcessingQueue) return
+  
+  const db = getDb()
+  const tokenRow = db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()
+  if (!tokenRow) return // Sin conexión a Google, no procesar
+
+  const pending = db.prepare(`
+    SELECT * FROM google_sync_queue 
+    WHERE next_retry_at <= ? AND attempts < 5
+    ORDER BY created_at ASC LIMIT 10
+  `).all(nowISO()) as any[]
+
+  if (pending.length === 0) return
+
+  isProcessingQueue = true
+
+
+  const oauth2 = buildOAuthClient()
+  if (!loadTokens(oauth2)) { isProcessingQueue = false; return }
+  const cal = google.calendar({ version: 'v3', auth: oauth2 })
+  const calId = getSalonCalendarId()
+
+  for (const task of pending) {
+    try {
+      const apt = db.prepare('SELECT * FROM appointments WHERE id = ?').get(task.appointment_id) as Appointment | undefined
+      
+      if (task.operation === 'delete') {
+        const payload = JSON.parse(task.payload || '{}')
+        if (payload.google_event_id) {
+          try {
+            await cal.events.delete({ calendarId: calId, eventId: payload.google_event_id })
+          } catch (deleteErr: any) {
+            // Si el evento ya no existe en Google (404), ignoramos el error
+            if (deleteErr.code !== 404) throw deleteErr
+          }
+        }
+      } else {
+        // Create o Update
+        if (!apt || apt.sync_status === 'cancelled') {
+          db.prepare('DELETE FROM google_sync_queue WHERE id = ?').run(task.id)
+          continue
+        }
+        await pushToGoogle(apt.id)
+      }
+
+      // Éxito: eliminar de la cola
+      db.prepare('DELETE FROM google_sync_queue WHERE id = ?').run(task.id)
+      
+      // Notificar a las ventanas para refrescar UI (Badges de Sync)
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('calendar:updated')
+      })
+    } catch (err: any) {
+      // Si el token es inválido o caducó (invalid_grant), desconectar para forzar re-login
+      if (isInvalidGrantError(err)) {
+        logger.error('Sesión de Google Calendar caducada o revocada. Desconectando...', err)
+        db.prepare('DELETE FROM google_oauth_tokens WHERE id=1').run()
+        isProcessingQueue = false
+        return // Detener procesamiento, requiere intervención del usuario
+      }
+
+      const attempts = task.attempts + 1
+      // Reintento exponencial: 2min, 4min, 8min, 16min...
+      const nextRetry = new Date()
+      nextRetry.setMinutes(nextRetry.getMinutes() + Math.pow(2, attempts))
+      
+      db.prepare(`
+        UPDATE google_sync_queue 
+        SET attempts = ?, last_error = ?, next_retry_at = ? 
+        WHERE id = ?
+      `).run(attempts, err.message || 'Error desconocido', nowISO(), task.id)
+      
+      logger.warn(`Tarea de sync ${task.id} falló (intento ${attempts}): ${err.message}`)
+    }
+  }
+
+  isProcessingQueue = false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,30 +459,36 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
   // se hace un pull automático de Google SOLO para ese rango específico.
   // Así una cita agendada a 1 año aparece al navegar hasta esa semana.
   ipcMain.handle('calendar:listAppointments', async (_e, dateFrom: string, dateTo: string) => {
+  
     try {
       const db = getDb()
-
-      // Verificar si hay datos locales en este rango (incluyendo synced)
       const localCount = (db.prepare(`
         SELECT COUNT(*) as n FROM appointments
         WHERE sync_status != 'cancelled'
           AND DATE(start_at) >= DATE(?) AND DATE(start_at) <= DATE(?)
       `).get(dateFrom, dateTo) as { n: number }).n
+      
 
-      // Si no hay datos locales y estamos conectados → pull lazy de ese rango
       if (localCount === 0) {
         const tokenRow = db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()
         if (tokenRow) {
-          try {
-            const oauth2 = buildOAuthClient()
-            if (loadTokens(oauth2)) {
-              await pullFromGoogle(oauth2, dateFrom, dateTo)
-            }
-          } catch (_) { /* No crítico — mostrar lo que hay en local */ }
+          
+          const oauth2 = buildOAuthClient()
+          if (loadTokens(oauth2)) {
+            pullFromGoogle(oauth2, dateFrom, dateTo).then((res) => {
+              
+              // SOLO avisar si hubo cambios reales en la DB
+              if (res.imported > 0 || res.updated > 0) {
+                BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
+              }
+            }).catch(err => {
+              logger.error('[Pull] Error en Lazy Pull', err)
+            })
+          }
         }
       }
 
-      // Consulta local después del pull (si lo hubo)
+      
       const rows = db.prepare(`
         SELECT a.*,
           (e.first_name || ' ' || e.last_name) AS employee_name,
@@ -369,9 +504,13 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
           AND DATE(a.start_at) <= DATE(?)
         ORDER BY a.start_at ASC
       `).all(dateFrom, dateTo) as Appointment[]
-
+      
+      
       return { ok: true, data: rows }
-    } catch (e: unknown) { return { ok: false, error: String(e) } }
+    } catch (e: unknown) { 
+      logger.error('[IPC] ERROR en listAppointments', e)
+      return { ok: false, error: String(e) } 
+    }
   })
 
   // ── Verificar empalmes ────────────────────────────────────────────────
@@ -383,18 +522,15 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
   })
 
   // ── Crear cita ────────────────────────────────────────────────────────
-  ipcMain.handle('calendar:createAppointment', async (_e, data: {
-    employee_id: number | null; client_id: number | null; service_id: number | null
-    title: string; description?: string; start_at: string; end_at: string
-    all_day?: boolean; color?: string; force?: boolean
-  }) => {
+  ipcMain.handle('calendar:createAppointment', async (_e, data: any) => {
     try {
       const db = getDb(); const now = nowISO()
 
       let overlaps: Appointment[] = []
       if (data.employee_id) overlaps = detectOverlaps(data.employee_id, data.start_at, data.end_at)
-      if (overlaps.length > 0 && !data.force)
+      if (overlaps.length > 0 && !data.force) {
         return { ok: false, code: 'OVERLAP', error: `El empleado ya tiene ${overlaps.length} cita(s) en ese horario.`, data: overlaps }
+      }
 
       const result = db.prepare(`
         INSERT INTO appointments
@@ -406,15 +542,30 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
         employee_id: data.employee_id ?? null, client_id: data.client_id ?? null,
         service_id:  data.service_id  ?? null, title: data.title,
         description: data.description ?? null, start_at: data.start_at, end_at: data.end_at,
-        all_day: data.all_day ? 1 : 0, color: data.color ?? null, now,
+        all_day: data.all_day ? 1 : 0, color: data.color ?? null, now: now,
       })
       const id = result.lastInsertRowid as number
 
-      const tokenRow = db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()
-      if (tokenRow) try { await pushToGoogle(id) } catch (_) { /* pending_sync */ }
+      db.prepare(`
+        INSERT INTO google_sync_queue (appointment_id, operation, created_at, next_retry_at)
+        VALUES (?, 'create', ?, ?)
+      `).run(id, now, now)
+
+      // NOTIFICAR REFRESCO INMEDIATO A LA UI
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('calendar:updated')
+      })
+
+      // DISPARAR EL TRABAJO DE FONDO DESPUÉS DE UN TIEMPO PRUDENCIAL
+      setTimeout(() => {
+        processSyncQueue().catch(() => {})
+      }, 1500)
 
       return { ok: true, data: { id, overlaps } }
-    } catch (e: unknown) { return { ok: false, error: String(e).replace('Error: ', '') } }
+    } catch (e: any) { 
+      logger.error('Error al crear cita', e)
+      return { ok: false, error: String(e).replace('Error: ', '') } 
+    }
   })
 
   // ── Actualizar cita ───────────────────────────────────────────────────
@@ -453,14 +604,28 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
         start_at:     newStartAt, end_at: newEndAt,
         all_day:      (data.all_day ?? cur.all_day) ? 1 : 0,
         color:        data.color ?? cur.color,
-        now, id,
+        now:          now, // <-- Corregido
+        id,
       })
 
-      const tokenRow = db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()
-      if (tokenRow) try { await pushToGoogle(id) } catch (_) { /* pending_sync */ }
+      // ENCOLAR SINCRONIZACIÓN
+      db.prepare(`
+        INSERT INTO google_sync_queue (appointment_id, operation, created_at, next_retry_at)
+        VALUES (?, 'update', ?, ?)
+      `).run(id, now, now)
+
+      setTimeout(() => processSyncQueue().catch(() => {}), 200)
+
+      // NOTIFICAR REFRESCO DE UI
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('calendar:updated')
+      })
 
       return { ok: true, data: { overlaps } }
-    } catch (e: unknown) { return { ok: false, error: String(e).replace('Error: ', '') } }
+    } catch (e: unknown) { 
+      logger.error('Error al actualizar cita', e)
+      return { ok: false, error: String(e).replace('Error: ', '') } 
+    }
   })
 
   // ── Cancelar cita ─────────────────────────────────────────────────────
@@ -470,19 +635,31 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
       const cur = db.prepare('SELECT * FROM appointments WHERE id=?').get(id) as Appointment | undefined
       if (!cur) return { ok: false, error: 'Cita no encontrada.' }
 
-      db.prepare('UPDATE appointments SET sync_status=?,updated_at=? WHERE id=?').run('cancelled', nowISO(), id)
+      const now = nowISO()
+      db.prepare('UPDATE appointments SET sync_status=?,updated_at=? WHERE id=?').run('cancelled', now, id)
 
       if (cur.google_event_id) {
-        const tokenRow = db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()
-        if (tokenRow) {
-          try {
-            const oauth2 = buildOAuthClient(); loadTokens(oauth2)
-            await google.calendar({ version: 'v3', auth: oauth2 }).events.delete({ calendarId: getSalonCalendarId(), eventId: cur.google_event_id })
-          } catch (_) { /* Silencioso */ }
-        }
+        // CORREGIDO: 5 signos de interrogación para 5 valores
+        db.prepare(`
+          INSERT INTO google_sync_queue (appointment_id, operation, payload, created_at, next_retry_at)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(id, 'delete', JSON.stringify({ google_event_id: cur.google_event_id }), now, now)
+        
+        setTimeout(() => {
+          processSyncQueue().catch(() => {})
+        }, 1500)
       }
+
+      // Notificar a la UI
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('calendar:updated')
+      })
+
       return { ok: true }
-    } catch (e: unknown) { return { ok: false, error: String(e).replace('Error: ', '') } }
+    } catch (e: any) { 
+      logger.error('Error en cancelAppointment', e)
+      return { ok: false, error: String(e).replace('Error: ', '') } 
+    }
   })
 
   // ── Sincronización push (pending_sync → Google) ───────────────────────
@@ -492,9 +669,25 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
       if (!db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()) return { ok: false, error: 'No conectado.' }
       const pending = db.prepare("SELECT id FROM appointments WHERE sync_status='pending_sync' ORDER BY updated_at ASC LIMIT 50").all() as { id: number }[]
       let synced = 0; let errors = 0
-      for (const row of pending) { try { await pushToGoogle(row.id); synced++ } catch (_) { errors++ } }
+      for (const row of pending) { 
+        try { 
+          await pushToGoogle(row.id)
+          synced++ 
+        } catch (e: any) { 
+          errors++ 
+          logger.error(`Fallo al sincronizar cita #${row.id} manualmente`, e)
+          
+          if (isInvalidGrantError(e)) {
+            db.prepare('DELETE FROM google_oauth_tokens WHERE id=1').run()
+            return { ok: false, error: 'La sesión de Google ha caducado. Por favor, vuelve a conectar la cuenta.' }
+          }
+        } 
+      }
       return { ok: true, data: { synced, errors, total: pending.length } }
-    } catch (e: unknown) { return { ok: false, error: String(e).replace('Error: ', '') } }
+    } catch (e: unknown) { 
+      logger.error('Error general en el proceso de sincronización manual', e)
+      return { ok: false, error: String(e).replace('Error: ', '') } 
+    }
   })
 
   // ── Pull manual desde Google (con paginación y rango opcional) ────────

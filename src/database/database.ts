@@ -15,6 +15,7 @@ export async function initDatabase(): Promise<void> {
   db = new Database(dbPath)
 
   db.pragma('journal_mode = WAL')
+  db.pragma('busy_timeout = 5000') // <-- CRÍTICO: Esperar hasta 5 segundos si está ocupada
   db.pragma('foreign_keys = ON')
   db.pragma('synchronous = NORMAL')
   db.pragma('cache_size = -32000')
@@ -53,6 +54,7 @@ function runMigrations() {
   if (current < 3) applyMigration3()
   if (current < 4) applyMigration4()
   if (current < 5) applyMigration5()   // ← Google OAuth tokens del salón
+  if (current < 6) applyMigration6()   // ← WhatsApp reminder log + settings
 }
 
 function getCurrentVersion(): number {
@@ -545,4 +547,58 @@ function applyMigration5() {
   migrate()
   setVersion(5)
   log('Migración 5 completada.')
+}
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 6 — WhatsApp: log de recordatorios + settings de plantillas
+// ─────────────────────────────────────────────────────────────────────────────
+function applyMigration6() {
+  log('Aplicando migración 6: WhatsApp reminder log + settings...')
+  const migrate = db.transaction(() => {
+
+    // Registro de cada mensaje enviado (evita duplicados y sirve de auditoría)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS whatsapp_reminder_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        appointment_id  INTEGER NOT NULL REFERENCES appointments(id),
+        client_id       INTEGER REFERENCES clients(id),
+        phone           TEXT    NOT NULL,
+        reminder_type   TEXT    NOT NULL
+                          CHECK(reminder_type IN ('1d', '3d', '7d', 'manual')),
+        message_preview TEXT    NOT NULL,
+        status          TEXT    NOT NULL DEFAULT 'pending'
+                          CHECK(status IN ('pending', 'sent', 'failed', 'skipped')),
+        error_message   TEXT,
+        sent_at         TEXT,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_wa_log_appointment ON whatsapp_reminder_log(appointment_id);
+      CREATE INDEX IF NOT EXISTS idx_wa_log_status      ON whatsapp_reminder_log(status);
+      CREATE INDEX IF NOT EXISTS idx_wa_log_date        ON whatsapp_reminder_log(created_at);
+      CREATE INDEX IF NOT EXISTS idx_wa_log_type_appt   ON whatsapp_reminder_log(reminder_type, appointment_id);
+    `)
+
+    // Seeds de settings para WhatsApp
+    db.exec(`
+      INSERT OR IGNORE INTO settings (key, value) VALUES
+        ('wa_enabled',           'false'),
+        ('wa_reminder_1d',       'true'),
+        ('wa_reminder_3d',       'true'),
+        ('wa_reminder_7d',       'false'),
+        ('wa_max_per_day',       '60'),
+        ('wa_delay_seconds',     '12'),
+        ('wa_send_hour',         '9'),
+        ('wa_template_1d',       'Hola {nombre}, te recordamos tu cita en {salon} mañana a las {hora} con {empleado} para {servicio}. ¿Confirmas tu asistencia? Responde SI o NO.'),
+        ('wa_template_3d',       'Hola {nombre}, tu cita en {salon} es el {fecha} a las {hora}. Si necesitas cancelar o reagendar, aún hay tiempo. Responde NO para liberar tu espacio.'),
+        ('wa_template_7d',       'Hola {nombre}, te recordamos tu cita el {fecha} a las {hora} en {salon}. Cualquier cambio avísanos con tiempo. ¡Te esperamos!')
+        ('wa_confirm_on_create',  'false'),
+        ('wa_template_confirm',   '¡Hola {nombre}! ✅ Tu cita en {salon} ha sido confirmada.\n\n📅 {fecha}\n🕐 {hora}\n✂️ {servicio}\n👤 {empleado}\n\n¡Te esperamos!'),
+        ('wa_logo_path',          '');
+        `)
+  })
+  migrate()
+  setVersion(6)
+  log('Migración 6 completada.')
 }

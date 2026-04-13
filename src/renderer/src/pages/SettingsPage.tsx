@@ -4,13 +4,14 @@ import {
   Calendar, Check, AlertCircle, RefreshCw, ExternalLink,
   ChevronDown, ChevronUp, Eye, EyeOff, ShieldCheck,
   Database, Download, Upload, FileText, History, Terminal,
-  AlertTriangle, Trash2, Info, Activity,
+  AlertTriangle, Trash2, Info, Activity,MessageCircle, Wifi, WifiOff, Send, Clock, ToggleLeft, ToggleRight
 } from 'lucide-react'
+
 import { PageHeader, Spinner, Paginator, Badge } from '../components/ui/index'
 
 import { Modal } from '../components/ui/Modal'
 import { applyTheme } from '../hooks/useAppState'
-import { ErrorLog } from '../types'
+import { ErrorLog, WhatsAppReminderLog } from '../types'
 
 interface SettingsForm {
   salon_name: string
@@ -24,6 +25,9 @@ interface SettingsForm {
   custom_warning: string; custom_info: string
   google_client_id: string
   google_secret: string
+  wa_confirm_on_create: string
+  wa_template_confirm: string
+  wa_logo_path: string
 }
 
 const DEFAULTS: SettingsForm = {
@@ -33,12 +37,12 @@ const DEFAULTS: SettingsForm = {
   custom_border: '#2e2920', custom_accent: '#d4881f', custom_text: '#f5f0e8',
   custom_text_muted: '#8a8070', custom_success: '#4caf7d', custom_danger: '#dc4a3d',
   custom_warning: '#e8a838', custom_info: '#4a90d9',
-  google_client_id: '', google_secret: '',
+  google_client_id: '', google_secret: '',wa_confirm_on_create: 'false', wa_template_confirm: '', wa_logo_path: '',
 }
 
 const CURRENCIES = ['MXN', 'USD', 'EUR', 'COP', 'ARS', 'CLP', 'PEN']
 
-type TabId = 'general' | 'appearance' | 'google' | 'system'
+type TabId = 'general' | 'appearance' | 'google' | 'whatsapp' | 'system'
 
 export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('general')
@@ -61,8 +65,27 @@ export const SettingsPage: React.FC = () => {
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [successMsg, setSuccessMsg] = useState<{ title: string; body: string } | null>(null)
 
+  // ── Estados WhatsApp ───────────────────────────────────────────────────────
+  const [waStatus, setWaStatus]       = useState<string>('disconnected')
+  const [waPhone, setWaPhone]         = useState<string | null>(null)
+  const [waQr, setWaQr]              = useState<string | null>(null)
+  const [waConnecting, setWaConnecting] = useState(false)
+  const [waStats, setWaStats]         = useState({ sentToday: 0, sentTotal: 0, deliveryRate: 100 })
+  const [waLog, setWaLog]            = useState<WhatsAppReminderLog[]>([])
+  const [waLogTotal, setWaLogTotal]  = useState(0)
+  const [waLogPage, setWaLogPage]    = useState(1)
+  const [waSettings, setWaSettings]  = useState({
+    wa_reminder_1d: 'true', wa_reminder_3d: 'true', wa_reminder_7d: 'false',
+    wa_max_per_day: '60',   wa_delay_seconds: '12', wa_send_hour: '9',
+    wa_template_1d: '', wa_template_3d: '', wa_template_7d: '',
+    wa_confirm_on_create: 'false',wa_template_confirm:  '',wa_logo_path:'',
+  })
+  const [waLogoPreview, setWaLogoPreview] = useState<string | null>(null)
+  const [waLogoFullscreen, setWaLogoFullscreen] = useState(false)
+
+
   useEffect(() => {
-    window.electronAPI.settings.getAll().then(res => {
+    window.electronAPI.settings.getAll().then((res: { ok: boolean; data?: Record<string, string>; error?: string }) => {
       if (res.ok) {
         const d = res.data as Record<string, string>
         setForm(prev => ({
@@ -85,6 +108,9 @@ export const SettingsPage: React.FC = () => {
           custom_info:      d.custom_info      ?? prev.custom_info,
           google_client_id: d.google_client_id ?? '',
           google_secret:    d.google_secret    ?? '',
+          wa_confirm_on_create: d.wa_confirm_on_create ?? prev.wa_confirm_on_create,
+          wa_template_confirm:  d.wa_template_confirm  ?? prev.wa_template_confirm,
+          wa_logo_path:         d.wa_logo_path         ?? prev.wa_logo_path,
         }))
       }
       setLoading(false)
@@ -97,6 +123,97 @@ export const SettingsPage: React.FC = () => {
       loadErrorLogs(1)
     }
   }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'whatsapp') return
+    const path = waSettings.wa_logo_path
+    if (path) {
+      ;(window.electronAPI as any).readImageAsBase64?.(path)
+        .then((res: any) => { if (res?.ok) setWaLogoPreview(res.data) })
+    } else {
+      setWaLogoPreview(null)
+    }
+  }, [activeTab, waSettings.wa_logo_path])
+
+  // Cargar datos de WhatsApp al activar la pestaña
+  useEffect(() => {
+    if (activeTab !== 'whatsapp') return
+
+    // Estado del cliente
+    window.electronAPI.whatsapp.getStatus().then((res: any) => {
+      if (res.ok) { setWaStatus(res.data.status); setWaPhone(res.data.phone) }
+    })
+    // Stats
+    window.electronAPI.whatsapp.getStats().then((res: any) => {
+      if (res.ok) setWaStats(res.data)
+    })
+    // Settings de WA
+    window.electronAPI.settings.getAll().then((res: any) => {
+      if (res.ok) {
+        const d = res.data
+        setWaSettings(prev => ({
+          wa_reminder_1d:   d.wa_reminder_1d   ?? prev.wa_reminder_1d,
+          wa_reminder_3d:   d.wa_reminder_3d   ?? prev.wa_reminder_3d,
+          wa_reminder_7d:   d.wa_reminder_7d   ?? prev.wa_reminder_7d,
+          wa_max_per_day:   d.wa_max_per_day   ?? prev.wa_max_per_day,
+          wa_delay_seconds: d.wa_delay_seconds ?? prev.wa_delay_seconds,
+          wa_send_hour:     d.wa_send_hour     ?? prev.wa_send_hour,
+          wa_template_1d:   d.wa_template_1d   ?? prev.wa_template_1d,
+          wa_template_3d:   d.wa_template_3d   ?? prev.wa_template_3d,
+          wa_template_7d:   d.wa_template_7d   ?? prev.wa_template_7d,
+          wa_confirm_on_create: d.wa_confirm_on_create ?? prev.wa_confirm_on_create,
+          wa_template_confirm:  d.wa_template_confirm  ?? prev.wa_template_confirm,
+          wa_logo_path:         d.wa_logo_path         ?? prev.wa_logo_path,
+        }))
+      }
+    })
+    loadWaLog(1)
+
+    // Escuchar push events del proceso principal
+    const unsubStatus = window.electronAPI.whatsapp.onStatus((data: any) => {
+      setWaStatus(data.status)
+      if (data.phone) setWaPhone(data.phone)
+      if (data.status === 'ready') { setWaQr(null); setWaConnecting(false) }
+      if (data.status === 'error') setWaConnecting(false)
+    })
+    const unsubQr = window.electronAPI.whatsapp.onQr((data: any) => {
+      setWaQr(data.qr); setWaStatus('qr')
+    })
+    return () => { unsubStatus(); unsubQr() }
+  }, [activeTab])
+
+  const loadWaLog = async (page: number) => {
+    const res = await window.electronAPI.whatsapp.getLog(page, 15)
+    if (res.ok) {
+      setWaLog(res.data.rows)
+      setWaLogTotal(res.data.total)
+      setWaLogPage(page)
+    }
+  }
+
+  const handleWaConnect = async () => {
+    setWaConnecting(true); setWaQr(null)
+    await window.electronAPI.whatsapp.connect()
+  }
+
+  const handleWaDisconnect = async () => {
+    await window.electronAPI.whatsapp.disconnect()
+    setWaStatus('disconnected'); setWaPhone(null); setWaQr(null)
+  }
+
+  const saveWaSettings = async () => {
+    setSaving(true)
+    await window.electronAPI.settings.set(waSettings)
+    await window.electronAPI.whatsapp.restartScheduler()
+    setSaving(false); setSaved(true)
+    setTimeout(() => setSaved(false), 3000)
+  }
+
+  const setWa = (key: keyof typeof waSettings, value: string) =>
+    setWaSettings(prev => ({ ...prev, [key]: value }))
+
+  const toggleWa = (key: keyof typeof waSettings) =>
+    setWa(key, waSettings[key] === 'true' ? 'false' : 'true')
 
   const loadErrorLogs = async (page: number) => {
     setLogsLoading(true)
@@ -196,6 +313,7 @@ export const SettingsPage: React.FC = () => {
     { id: 'appearance', label: 'Apariencia', icon: <Palette size={14} /> },
     { id: 'google',     label: 'Google',     icon: <Calendar size={14} /> },
     { id: 'system',     label: 'Sistema',    icon: <Terminal size={14} /> },
+    { id: 'whatsapp',   label: 'WhatsApp',   icon: <MessageCircle size={14} /> },
   ]
 
   return (
@@ -338,7 +456,7 @@ export const SettingsPage: React.FC = () => {
                     ] as [keyof SettingsForm, string][]).map(([key, label]) => (
                       <div key={key} className="flex items-center gap-3">
                         <input type="color"
-                          value={(form as Record<string, string>)[key] ?? '#000000'}
+                          value={form[key] ?? '#000000'}
                           onChange={e => set(key, e.target.value)}
                           className="w-9 h-9 rounded-lg border cursor-pointer flex-shrink-0"
                           style={{ borderColor: 'var(--color-border)', padding: '2px', background: 'var(--color-surface-2)' }}
@@ -346,7 +464,7 @@ export const SettingsPage: React.FC = () => {
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>{label}</p>
                           <p className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>
-                            {(form as Record<string, string>)[key]}
+                            {form[key]}
                           </p>
                         </div>
                       </div>
@@ -439,6 +557,332 @@ export const SettingsPage: React.FC = () => {
 
               {showGuide && <GoogleCloudGuide />}
             </Section>
+          )}
+
+          {/* ── Tab: WhatsApp ───────────────────────────────────────────────── */}
+          {activeTab === 'whatsapp' && (
+            <>
+              {/* Conexión */}
+              <Section title="Vinculación de WhatsApp" icon={<MessageCircle size={16} />}>
+                {/* Estado */}
+                <div className="flex items-center gap-3 p-3 rounded-lg"
+                    style={{
+                      background: waStatus === 'ready'
+                        ? 'color-mix(in srgb,var(--color-success) 10%,transparent)'
+                        : 'color-mix(in srgb,var(--color-warning) 10%,transparent)'
+                    }}>
+                  {waStatus === 'ready'
+                    ? <Wifi size={16} style={{ color: 'var(--color-success)', flexShrink: 0 }} />
+                    : <WifiOff size={16} style={{ color: 'var(--color-warning)', flexShrink: 0 }} />}
+                  <div className="flex-1">
+                    <p className="text-xs font-medium"
+                      style={{ color: waStatus === 'ready' ? 'var(--color-success)' : 'var(--color-warning)' }}>
+                      {waStatus === 'ready' ? `Conectado — ${waPhone ?? ''}` :
+                      waStatus === 'qr'    ? 'Esperando escaneo del QR...' :
+                      waStatus === 'connecting' ? 'Iniciando conexión...' :
+                      waStatus === 'error' ? 'Error de conexión' : 'No vinculado'}
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      {waStatus === 'ready'
+                        ? 'El número del salón está activo y puede enviar recordatorios.'
+                        : 'Vincula el número del salón escaneando el QR con WhatsApp.'}
+                    </p>
+                  </div>
+                  {waStatus === 'ready'
+                    ? <button onClick={handleWaDisconnect} className="luma-btn-ghost text-xs"
+                              style={{ color: 'var(--color-danger)' }}>Desvincular</button>
+                    : <button onClick={handleWaConnect} disabled={waConnecting} className="luma-btn-primary text-xs">
+                        {waConnecting ? <><Loader2 size={12} className="animate-spin" /> Iniciando...</>
+                                    : 'Vincular WhatsApp'}
+                      </button>
+                  }
+                </div>
+
+                {/* QR */}
+                {waQr && (
+                  <div className="flex flex-col items-center gap-3 p-4 rounded-lg border"
+                      style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface-2)' }}>
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      Abre WhatsApp en el teléfono del salón → Dispositivos vinculados → Vincular dispositivo
+                    </p>
+                    <QRCodeDisplay qr={waQr} />
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      El QR expira en 60 segundos. Se regenera automáticamente.
+                    </p>
+                  </div>
+                )}
+
+                {/* Stats */}
+                {waStatus === 'ready' && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: 'Enviados hoy',    value: waStats.sentToday },
+                      { label: 'Total enviados',  value: waStats.sentTotal },
+                      { label: 'Tasa de entrega', value: `${waStats.deliveryRate}%` },
+                    ].map(s => (
+                      <div key={s.label} className="rounded-lg p-3 text-center"
+                          style={{ background: 'var(--color-surface-2)' }}>
+                        <div className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>{s.value}</div>
+                        <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+
+              {/* Recordatorios automáticos */}
+              <Section title="Recordatorios automáticos" icon={<Clock size={16} />}>
+                {[
+                  { key: 'wa_reminder_1d' as const, label: 'Recordatorio 1 día antes',  desc: 'Se envía cada mañana a la hora configurada' },
+                  { key: 'wa_reminder_3d' as const, label: 'Recordatorio 3 días antes', desc: 'Permite cancelar con tiempo para reasignar el espacio' },
+                  { key: 'wa_reminder_7d' as const, label: 'Recordatorio 7 días antes', desc: 'Para citas con mucha anticipación' },
+                ].map(item => (
+                  <div key={item.key} className="flex items-center gap-3 py-2 border-b last:border-0"
+                      style={{ borderColor: 'var(--color-border)' }}>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>{item.label}</p>
+                      <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{item.desc}</p>
+                    </div>
+                    <button onClick={() => toggleWa(item.key)} className="flex-shrink-0">
+                      {waSettings[item.key] === 'true'
+                        ? <ToggleRight size={28} style={{ color: 'var(--color-success)' }} />
+                        : <ToggleLeft  size={28} style={{ color: 'var(--color-text-muted)' }} />}
+                    </button>
+                  </div>
+                ))}
+
+                <div className="grid grid-cols-3 gap-3 pt-2">
+                  <div>
+                    <label className="luma-label">Hora de envío</label>
+                    <select value={waSettings.wa_send_hour}
+                      onChange={e => setWa('wa_send_hour', e.target.value)} className="luma-input">
+                      {Array.from({ length: 16 }, (_, i) => i + 7).map(h => (
+                        <option key={h} value={String(h)}>{String(h).padStart(2,'0')}:00</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="luma-label">Máx. mensajes/día</label>
+                    <input type="number" min="10" max="200" value={waSettings.wa_max_per_day}
+                      onChange={e => setWa('wa_max_per_day', e.target.value)} className="luma-input" />
+                  </div>
+                  <div>
+                    <label className="luma-label">Pausa entre envíos (seg)</label>
+                    <input type="number" min="5" max="60" value={waSettings.wa_delay_seconds}
+                      onChange={e => setWa('wa_delay_seconds', e.target.value)} className="luma-input" />
+                  </div>
+                </div>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  La pausa entre mensajes se aplica con un margen aleatorio para imitar comportamiento humano y reducir el riesgo de detección.
+                </p>
+              </Section>
+
+              {/* Plantillas */}
+              <Section title="Plantillas de mensaje" icon={<Send size={16} />}>
+                <div className="flex flex-wrap gap-2 p-3 rounded-lg"
+                    style={{ background: 'var(--color-surface-2)' }}>
+                  <p className="text-xs w-full mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                    Variables disponibles — haz clic para copiar:
+                  </p>
+                  {['{nombre}', '{fecha}', '{hora}', '{servicio}', '{empleado}', '{salon}'].map(v => (
+                    <button key={v} onClick={() => navigator.clipboard.writeText(v)}
+                      className="text-xs px-2 py-1 rounded font-mono border transition-colors"
+                      style={{ borderColor: 'var(--color-border)', color: 'var(--color-accent)',
+                              background: 'color-mix(in srgb,var(--color-accent) 8%,transparent)' }}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Confirmación automática al crear cita */}
+                <div className="flex flex-col gap-2 pb-4 mb-2 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                        Confirmación al crear cita
+                      </p>
+                      <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        Envía un mensaje automático al cliente cuando se agenda una nueva cita
+                      </p>
+                    </div>
+                    <button onClick={() => toggleWa('wa_confirm_on_create')}>
+                      {waSettings.wa_confirm_on_create === 'true'
+                        ? <ToggleRight size={28} style={{ color: 'var(--color-success)' }} />
+                        : <ToggleLeft  size={28} style={{ color: 'var(--color-text-muted)' }} />}
+                    </button>
+                  </div>
+
+                  {/* Selector de logo */}
+                  <div>
+                    <label className="luma-label">Logo del salón (imagen para adjuntar)</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="text"
+                        readOnly
+                        placeholder="Sin logo seleccionado — se enviará solo texto"
+                        value={waSettings.wa_logo_path ?? ''}
+                        className="luma-input flex-1 text-xs"
+                        style={{ color: 'var(--color-text-muted)' }}
+                      />
+                      <button
+                        className="luma-btn-ghost text-xs flex-shrink-0"
+                        onClick={async () => {
+                          const res = await (window.electronAPI as any).selectImageFile?.()
+                          if (res?.ok && res.path) {
+                            setWa('wa_logo_path' as any, res.path)
+                            // Leer como base64 para preview
+                            const previewRes = await (window.electronAPI as any).readImageAsBase64?.(res.path)
+                            if (previewRes?.ok) setWaLogoPreview(previewRes.data)
+                          }
+                        }}>
+                        Seleccionar
+                      </button>
+                      {waSettings.wa_logo_path && (
+                        <button
+                          className="luma-btn-ghost text-xs flex-shrink-0"
+                          style={{ color: 'var(--color-danger)' }}
+                          onClick={() => {
+                            setWa('wa_logo_path' as any, '')
+                            setWaLogoPreview(null)
+                          }}>
+                          Quitar
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                      Formatos: JPG, PNG, WEBP. Recomendado: mínimo 400×400px.
+                    </p>
+                  </div>
+
+                  {waLogoPreview && (
+                    <div className="flex items-start gap-3 p-3 rounded-lg"
+                        style={{ background: 'var(--color-surface-2)' }}>
+                      {/* Thumbnail clicable */}
+                      <img
+                        src={waLogoPreview}
+                        alt="Logo del salón"
+                        className="w-16 h-16 rounded-lg object-cover border cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                        style={{ borderColor: 'var(--color-border)' }}
+                        onClick={() => setWaLogoFullscreen(true)}
+                        title="Clic para ver en tamaño completo"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+                          Logo seleccionado
+                        </p>
+                        <p className="text-xs mt-0.5 truncate font-mono" style={{ color: 'var(--color-text-muted)' }}>
+                          {waSettings.wa_logo_path}
+                        </p>
+                        <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                          Haz clic en la imagen para verla en tamaño completo.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Template de confirmación */}
+                  <div>
+                    <label className="luma-label">Mensaje de confirmación</label>
+                    <textarea
+                      rows={5}
+                      value={waSettings.wa_template_confirm ?? ''}
+                      onChange={e => setWa('wa_template_confirm' as any, e.target.value)}
+                      disabled={waSettings.wa_confirm_on_create !== 'true'}
+                      className="luma-input resize-none font-mono text-xs leading-relaxed"
+                      style={{ opacity: waSettings.wa_confirm_on_create === 'true' ? 1 : 0.5 }}
+                    />
+                  </div>
+                </div>
+                {([
+                  { key: 'wa_template_1d' as const, label: 'Plantilla — 1 día antes',  enabled: waSettings.wa_reminder_1d === 'true' },
+                  { key: 'wa_template_3d' as const, label: 'Plantilla — 3 días antes', enabled: waSettings.wa_reminder_3d === 'true' },
+                  { key: 'wa_template_7d' as const, label: 'Plantilla — 7 días antes', enabled: waSettings.wa_reminder_7d === 'true' },
+                ] as const).map(tpl => (
+                  <div key={tpl.key} className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <label className="luma-label flex-1">{tpl.label}</label>
+                      {!tpl.enabled && (
+                        <span className="text-xs px-2 py-0.5 rounded-full"
+                              style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>
+                          Desactivado
+                        </span>
+                      )}
+                    </div>
+                    <textarea rows={3} value={waSettings[tpl.key]}
+                      onChange={e => setWa(tpl.key, e.target.value)}
+                      disabled={!tpl.enabled}
+                      placeholder={tpl.enabled ? 'Escribe el mensaje...' : 'Activa este recordatorio para editar la plantilla'}
+                      className="luma-input resize-none font-mono text-xs leading-relaxed"
+                      style={{ opacity: tpl.enabled ? 1 : 0.5 }} />
+                    {tpl.enabled && !waSettings[tpl.key].trim() && (
+                      <p className="text-xs" style={{ color: 'var(--color-danger)' }}>
+                        ⚠ Sin plantilla — las citas de este tipo serán omitidas en el envío.
+                      </p>
+                    )}
+                  </div>
+                ))}
+
+                <div className="flex justify-end pt-2">
+                  <button onClick={saveWaSettings} disabled={saving} className="luma-btn-primary">
+                    {saving ? <><Loader2 size={14} className="animate-spin" /> Guardando...</>
+                            : <><Save size={14} /> Guardar plantillas y ajustes</>}
+                  </button>
+                </div>
+              </Section>
+
+              {/* Historial */}
+              <Section title="Historial de envíos" icon={<History size={16} />}>
+                <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--color-border)' }}>
+                  <table className="w-full text-left text-xs">
+                    <thead style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">Cliente</th>
+                        <th className="px-3 py-2 font-semibold w-24">Tipo</th>
+                        <th className="px-3 py-2 font-semibold w-24">Estado</th>
+                        <th className="px-3 py-2 font-semibold w-32">Fecha</th>
+                      </tr>
+                    </thead>
+                    <tbody style={{ color: 'var(--color-text)' }}>
+                      {waLog.length === 0 ? (
+                        <tr><td colSpan={4} className="px-3 py-8 text-center"
+                                style={{ color: 'var(--color-text-muted)' }}>
+                          No hay mensajes registrados aún.
+                        </td></tr>
+                      ) : waLog.map(log => (
+                        <tr key={log.id} className="border-t" style={{ borderColor: 'var(--color-border)' }}>
+                          <td className="px-3 py-2">
+                            <p className="font-medium truncate max-w-[160px]">{log.client_name ?? '—'}</p>
+                            <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{log.phone}</p>
+                          </td>
+                          <td className="px-3 py-2">
+                            <Badge variant="muted" className="text-[10px] uppercase">{log.reminder_type}</Badge>
+                          </td>
+                          <td className="px-3 py-2">
+                            <Badge variant={
+                              log.status === 'sent'    ? 'success' :
+                              log.status === 'failed'  ? 'danger'  :
+                              log.status === 'pending' ? 'warning' : 'muted'
+                            } className="text-[10px]">
+                              {log.status === 'sent' ? 'Enviado' : log.status === 'failed' ? 'Falló' :
+                              log.status === 'pending' ? 'En cola' : 'Omitido'}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2 text-[10px] font-mono whitespace-nowrap"
+                              style={{ color: 'var(--color-text-muted)' }}>
+                            {log.sent_at
+                              ? new Date(log.sent_at).toLocaleString('es-MX', { hour12: true, dateStyle: 'short', timeStyle: 'short' })
+                              : new Date(log.created_at).toLocaleString('es-MX', { hour12: true, dateStyle: 'short', timeStyle: 'short' })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {waLogTotal > 15 && (
+                  <Paginator page={waLogPage} pageSize={15} total={waLogTotal} onChange={loadWaLog} />
+                )}
+              </Section>
+            </>
           )}
 
           {/* ── Tab: Sistema (Fase 12 y 13) ─────────────────────────────── */}
@@ -701,7 +1145,49 @@ export const SettingsPage: React.FC = () => {
           </button>
         </div>
       </Modal>
+      {/* Modal fullscreen del logo — ver imagen en pantalla completa */}
+      <Modal
+        isOpen={waLogoFullscreen}
+        onClose={() => setWaLogoFullscreen(false)}
+        title="Logo del salón"
+        width="lg">
+        <div className="flex flex-col items-center gap-4">
+          {waLogoPreview && (
+            <img
+              src={waLogoPreview}
+              alt="Logo del salón"
+              className="max-w-full rounded-xl border"
+              style={{ maxHeight: '70vh', objectFit: 'contain', borderColor: 'var(--color-border)' }}
+            />
+          )}
+          <button onClick={() => setWaLogoFullscreen(false)} className="luma-btn-primary px-8">
+            Cerrar
+          </button>
+        </div>
+      </Modal>
     </div>
+  )
+}
+
+
+// ── QR Code display usando qrcode como data URL ───────────────────────────────
+const QRCodeDisplay: React.FC<{ qr: string }> = ({ qr }) => {
+  const [dataUrl, setDataUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    // qrcode está disponible en el proceso renderer vía window si lo exponemos,
+    // pero más simple: generamos el QR como imagen SVG inline usando la cadena cruda
+    // que whatsapp-web.js entrega (ya es una cadena qr estándar).
+    // Usamos una API pública del CDN para generar el QR en el renderer.
+    const url = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qr)}`
+    setDataUrl(url)
+  }, [qr])
+
+  if (!dataUrl) return <div className="w-44 h-44 rounded-lg animate-pulse"
+                             style={{ background: 'var(--color-surface-2)' }} />
+  return (
+    <img src={dataUrl} alt="QR WhatsApp" width={180} height={180}
+         className="rounded-lg border" style={{ borderColor: 'var(--color-border)' }} />
   )
 }
 
