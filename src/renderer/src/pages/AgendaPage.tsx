@@ -3,7 +3,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, Plus,
   Wifi, WifiOff, Settings2, AlertCircle, Check, Loader2,
   Calendar, LayoutGrid, LogOut, RefreshCw, Bell, BellOff,
-  Cloud, CloudOff, CloudAlert, Link2,MessageCircle
+  Cloud, CloudOff, CloudAlert, Link2, MessageCircle,
 } from 'lucide-react'
 import type { Appointment, Employee } from '../types'
 import { PageHeader, Spinner, Badge } from '../components/ui/index'
@@ -13,7 +13,6 @@ import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth,
   addDays, addWeeks, addMonths, subWeeks, subMonths,
   format, isSameDay, isSameMonth, parseISO, isToday,
-  startOfDay, endOfDay,
 } from 'date-fns'
 import { WhatsAppPreviewModal } from '../components/agenda/WhatsAppPreviewModal'
 import { es } from 'date-fns/locale'
@@ -34,28 +33,26 @@ const getSyncIcon = (status: string) => {
 }
 
 const aptColor = (apt: Appointment) => {
-  // Si no tiene empleado asignado, es un evento externo o sin asignar
-  if (!apt.employee_id && !apt.color) return '#4b5563' // Gris oscuro (Zinc 600)
+  if (!apt.employee_id && !apt.color) return '#4b5563'
   return GC_HEX[apt.color ?? ''] ?? GC_HEX[apt.employee_color ?? ''] ?? 'var(--color-accent)'
 }
 
 type CalView = 'week' | 'month'
 interface GcStatus { connected: boolean; has_credentials: boolean; connected_at: string | null; calendar_id: string }
+interface WaStatus { status: string; phone: string | null }
 
-// ── Sistema de Alertas (Voz, Notificaciones y Sonido) ────────────────────────
+// ── Sistema de Alertas ────────────────────────────────────────────────────────
 function playChime() {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
     const now = ctx.currentTime
     const osc1 = ctx.createOscillator(); const osc2 = ctx.createOscillator()
     const gain = ctx.createGain()
-    
-    osc1.frequency.setValueAtTime(523.25, now) // C5
-    osc2.frequency.setValueAtTime(659.25, now) // E5
+    osc1.frequency.setValueAtTime(523.25, now)
+    osc2.frequency.setValueAtTime(659.25, now)
     gain.gain.setValueAtTime(0, now)
     gain.gain.linearRampToValueAtTime(0.2, now + 0.1)
     gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
-    
     osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination)
     osc1.start(now); osc2.start(now); osc1.stop(now + 1.5); osc2.stop(now + 1.5)
   } catch (_) {}
@@ -63,11 +60,9 @@ function playChime() {
 
 function speakAlert(text: string) {
   if (!window.speechSynthesis) return
-  const utterance = new SpeechSynthesisUtterance(text)
-  utterance.lang = 'es-MX'
-  utterance.rate = 0.9 // Un poco más lento para que sea claro
-  utterance.pitch = 1
-  window.speechSynthesis.speak(utterance)
+  const u = new SpeechSynthesisUtterance(text)
+  u.lang = 'es-MX'; u.rate = 0.9; u.pitch = 1
+  window.speechSynthesis.speak(u)
 }
 
 function showDesktopNotification(title: string, body: string) {
@@ -82,30 +77,28 @@ function showDesktopNotification(title: string, body: string) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export const AgendaPage: React.FC = () => {
-  const [view, setView]               = useState<CalView>('week')
-  const [current, setCurrent]         = useState(new Date())
-  const [appointments, setAppts]      = useState<Appointment[]>([])
-  const [employees, setEmployees]     = useState<Employee[]>([])
-  const [loading, setLoading]         = useState(true)
-  const [syncing, setSyncing]         = useState(false)
-  const [connecting, setConnecting]   = useState(false)
-  const [disconnecting, setDisconn]   = useState(false)
-  const [gcStatus, setGcStatus]       = useState<GcStatus>({ connected: false, has_credentials: false, connected_at: null, calendar_id: 'primary' })
-  const [toast, setToast]             = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
-  const [waBulkOpen, setWaBulkOpen]   = useState(false)
-  const [waBulkIds, setWaBulkIds]     = useState<number[]>([])
-  const [modalOpen, setModalOpen]     = useState(false)
-  const [editingApt, setEditingApt]   = useState<Appointment | null>(null)
-  const [defaultStart, setDefStart]   = useState<string | undefined>()
-
-  // Modal de confirmación de cancelación (reemplaza window.confirm)
+  const [view, setView]             = useState<CalView>('week')
+  const [current, setCurrent]       = useState(new Date())
+  const [appointments, setAppts]    = useState<Appointment[]>([])
+  const [employees, setEmployees]   = useState<Employee[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [syncing, setSyncing]       = useState(false)
+  const [connecting, setConnecting] = useState(false)
+  const [disconnecting, setDisconn] = useState(false)
+  const [gcStatus, setGcStatus]     = useState<GcStatus>({ connected: false, has_credentials: false, connected_at: null, calendar_id: 'primary' })
+  const [waStatus, setWaStatus]     = useState<WaStatus>({ status: 'disconnected', phone: null })
+  const [toast, setToast]           = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const [waBulkOpen, setWaBulkOpen] = useState(false)
+  const [waBulkIds, setWaBulkIds]   = useState<number[]>([])
+  const [modalOpen, setModalOpen]   = useState(false)
+  const [editingApt, setEditingApt] = useState<Appointment | null>(null)
+  const [defaultStart, setDefStart] = useState<string | undefined>()
   const [cancelConfirm, setCancelConfirm] = useState<{ onConfirm: () => void } | null>(null)
-  // Alertas sonoras
-  const [alertsEnabled, setAlerts]    = useState(true)
-  const alertedIds                    = useRef<Set<number>>(new Set())
-  const alertTimerRef                 = useRef<ReturnType<typeof setInterval> | null>(null)
-  // Todas las citas cargadas (para el checker de alertas — abarca más que el rango visible)
-  const allAptsRef                    = useRef<Appointment[]>([])
+  const [pastDateConfirm, setPastDateConfirm] = useState<string | null>(null)
+  const [alertsEnabled, setAlerts]  = useState(true)
+  const alertedIds                  = useRef<Set<number>>(new Set())
+  const alertTimerRef               = useRef<ReturnType<typeof setInterval> | null>(null)
+  const allAptsRef                  = useRef<Appointment[]>([])
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type })
@@ -123,13 +116,9 @@ export const AgendaPage: React.FC = () => {
     }
   }, [current, view])
 
-
-  
-
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      // Cargar rango extendido para alertas (hoy + 7 días)
       const today   = format(new Date(), 'yyyy-MM-dd')
       const in7days = format(addDays(new Date(), 7), 'yyyy-MM-dd')
       const [aptRes, alertRes, empRes, gcRes] = await Promise.all([
@@ -145,70 +134,69 @@ export const AgendaPage: React.FC = () => {
     } finally { setLoading(false) }
   }, [rangeFrom, rangeTo])
 
-  // 1. Carga inicial y cambios de rango (view/current)
-  useEffect(() => { 
-    loadAll() 
-  }, [rangeFrom, rangeTo]) // Solo recargar si cambia el rango visible
-
-  // 2. Listener de actualizaciones de fondo (Sync Worker)
+  // Cargar estado de WhatsApp al montar y escuchar cambios en tiempo real
   useEffect(() => {
-    const unsub = window.electronAPI.calendar.onCalendarUpdated(() => {
-      // Solo disparar carga si NO está ya cargando (evita solapamientos)
-      if (!loading) {
-        loadAll()
-      }
+    window.electronAPI.whatsapp.getStatus().then((res: any) => {
+      if (res.ok) setWaStatus(res.data)
+    })
+    const unsub = window.electronAPI.whatsapp.onStatus((data: any) => {
+      setWaStatus({ status: data.status, phone: data.phone ?? null })
     })
     return () => unsub()
-  }, [loadAll, loading]) // Ahora depende de loading para saber cuándo saltar
+  }, [])
 
-  // ── Motor de alertas sonoras ──────────────────────────────────────────────
+  useEffect(() => { loadAll() }, [rangeFrom, rangeTo])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.calendar.onCalendarUpdated(() => {
+      if (!loading) loadAll()
+    })
+    return () => unsub()
+  }, [loadAll, loading])
+
+  // Motor de alertas sonoras
   useEffect(() => {
     if (alertTimerRef.current) clearInterval(alertTimerRef.current)
-    
     if (!alertsEnabled) {
-      // SILENCIAR VOZ SI SE DESACTIVAN ALERTAS
       if (window.speechSynthesis) window.speechSynthesis.cancel()
       return
     }
-
     const checkAlerts = () => {
-      const now    = new Date()
-      const apts   = allAptsRef.current
-      for (const apt of apts) {
-        const start     = new Date(apt.start_at)
-        const diffMs    = start.getTime() - now.getTime()
-        const diffMin   = Math.round(diffMs / 60000)
-
-        // Ventana de aviso: Justo a los 15 y 5 minutos antes
+      const now = new Date()
+      for (const apt of allAptsRef.current) {
+        const start   = new Date(apt.start_at)
+        const diffMin = Math.round((start.getTime() - now.getTime()) / 60000)
         if ((diffMin === 15 || diffMin === 5) && !alertedIds.current.has(parseInt(`${apt.id}${diffMin}`))) {
           alertedIds.current.add(parseInt(`${apt.id}${diffMin}`))
-          
-          // 1. Sonido suave
           playChime()
-
-          // 2. Notificación Visual
           const body = `${apt.service_name || apt.title} ${apt.client_name ? 'para ' + apt.client_name : ''}`
           showDesktopNotification(`Cita en ${diffMin} min`, body)
-
-          // 3. Alerta de VOZ
-          const voiceText = `Cita en ${diffMin} minutos: ${apt.service_name || apt.title} ${apt.client_name ? 'para ' + apt.client_name : ''}`
+          const voiceText = `Cita en ${diffMin} minutos: ${body}`
           speakAlert(voiceText)
-          
           showToast(`🔔 ${voiceText}`, 'success')
         }
       }
     }
-
-    alertTimerRef.current = setInterval(checkAlerts, 30_000) // checar cada 30s
-    checkAlerts() // checar inmediatamente al montar
+    alertTimerRef.current = setInterval(checkAlerts, 30_000)
+    checkAlerts()
     return () => { if (alertTimerRef.current) clearInterval(alertTimerRef.current) }
   }, [alertsEnabled])
 
   const prev    = () => setCurrent(v => view === 'week' ? subWeeks(v, 1) : subMonths(v, 1))
   const next    = () => setCurrent(v => view === 'week' ? addWeeks(v, 1) : addMonths(v, 1))
   const goToday = () => setCurrent(new Date())
-  const openNew = (startISO?: string) => { setEditingApt(null); setDefStart(startISO); setModalOpen(true) }
-  const openEdit = (apt: Appointment) => { setEditingApt(apt); setDefStart(undefined); setModalOpen(true) }
+
+  const openNew = (startISO?: string) => {
+    if (startISO && new Date(startISO) < new Date()) {
+      setPastDateConfirm(startISO)
+      return
+    }
+    setEditingApt(null); setDefStart(startISO); setModalOpen(true)
+  }
+
+  const openEdit = (apt: Appointment) => {
+    setEditingApt(apt); setDefStart(undefined); setModalOpen(true)
+  }
 
   const handleConnect = async () => {
     setConnecting(true)
@@ -236,19 +224,14 @@ export const AgendaPage: React.FC = () => {
     setSyncing(true)
     try {
       const res = await window.electronAPI.calendar.sync()
-      if (!res.ok) { 
+      if (!res.ok) {
         showToast(res.error ?? 'Error al sincronizar', 'error')
-        // Forzar recarga de estado para detectar si se desconectó por error
-        await loadAll()
-        return 
+        await loadAll(); return
       }
       const { synced, errors } = res.data as { synced: number; errors: number }
       showToast(errors > 0 ? `${synced} sincronizadas · ${errors} errores` : `${synced} citas sincronizadas`)
       await loadAll()
-    } catch (e) { 
-      showToast(String(e), 'error')
-      await loadAll()
-    }
+    } catch (e) { showToast(String(e), 'error'); await loadAll() }
     finally { setSyncing(false) }
   }
 
@@ -259,14 +242,18 @@ export const AgendaPage: React.FC = () => {
       const ids = (res.data as Appointment[])
         .filter((a: Appointment) => a.client_id !== null)
         .map((a: Appointment) => a.id)
-      setWaBulkIds(ids)
-      setWaBulkOpen(true)
+      if (ids.length === 0) { showToast('No hay citas con cliente para mañana.', 'error'); return }
+      setWaBulkIds(ids); setWaBulkOpen(true)
     }
   }
 
   const periodLabel = view === 'week'
     ? `${format(startOfWeek(current, { weekStartsOn: 1 }), 'd MMM', { locale: es })} – ${format(endOfWeek(current, { weekStartsOn: 1 }), 'd MMM yyyy', { locale: es })}`
     : format(current, 'MMMM yyyy', { locale: es }).replace(/^\w/, c => c.toUpperCase())
+
+  const pastDateLabel = pastDateConfirm
+    ? format(new Date(pastDateConfirm), "EEEE d 'de' MMMM 'a las' HH:mm", { locale: es })
+    : ''
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -294,7 +281,6 @@ export const AgendaPage: React.FC = () => {
               ))}
             </div>
 
-            {/* Toggle alertas sonoras */}
             <button onClick={() => setAlerts(a => !a)}
               title={alertsEnabled ? 'Desactivar alertas sonoras' : 'Activar alertas sonoras'}
               className="luma-btn-ghost p-2"
@@ -313,7 +299,7 @@ export const AgendaPage: React.FC = () => {
         }
       />
 
-      {/* Banner conexión Google */}
+      {/* Banner Google Calendar */}
       <ConnectionBanner
         status={gcStatus} connecting={connecting} syncing={syncing} disconnecting={disconnecting}
         onConnect={handleConnect} onSync={handleSync}
@@ -321,19 +307,22 @@ export const AgendaPage: React.FC = () => {
         onRefresh={loadAll}
       />
 
-      {/* Toast */}
+      {/* Banner WhatsApp */}
+      <WhatsAppBanner status={waStatus} />
+
       {toast && (
         <div className="mx-6 mt-1 rounded-lg px-4 py-2 text-xs flex items-center gap-2 animate-fade-in"
              style={{
-               background: toast.type === 'error' ? 'color-mix(in srgb,var(--color-danger) 12%,transparent)' : 'color-mix(in srgb,var(--color-success) 12%,transparent)',
-               color:      toast.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)',
+               background: toast.type === 'error'
+                 ? 'color-mix(in srgb,var(--color-danger) 12%,transparent)'
+                 : 'color-mix(in srgb,var(--color-success) 12%,transparent)',
+               color: toast.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)',
              }}>
           {toast.type === 'error' ? <AlertCircle size={12} /> : <Bell size={12} />}
           {toast.msg}
         </div>
       )}
 
-      {/* Calendario */}
       <div className="flex-1 overflow-hidden">
         {loading ? (
           <div className="flex justify-center items-center h-full"><Spinner size={32} /></div>
@@ -346,7 +335,6 @@ export const AgendaPage: React.FC = () => {
         )}
       </div>
 
-      {/* Modal de cita */}
       <AppointmentModal
         isOpen={modalOpen} initial={editingApt}
         defaultStart={defaultStart} employees={employees}
@@ -354,7 +342,6 @@ export const AgendaPage: React.FC = () => {
         onConfirmCancel={onConfirm => setCancelConfirm({ onConfirm })}
       />
 
-      {/* Modal de confirmación personalizado (reemplaza window.confirm) */}
       <Modal isOpen={!!cancelConfirm} onClose={() => setCancelConfirm(null)}
         title="¿Confirmar acción?" width="sm">
         <div className="flex flex-col gap-4">
@@ -364,9 +351,7 @@ export const AgendaPage: React.FC = () => {
             {gcStatus.connected ? ' y se eliminará de Google Calendar.' : '.'}
           </div>
           <div className="flex justify-end gap-2">
-            <button onClick={() => setCancelConfirm(null)} className="luma-btn-ghost">
-              Volver
-            </button>
+            <button onClick={() => setCancelConfirm(null)} className="luma-btn-ghost">Volver</button>
             <button onClick={() => { cancelConfirm?.onConfirm(); setCancelConfirm(null) }}
               className="luma-btn text-white text-sm" style={{ background: 'var(--color-danger)' }}>
               Confirmar cancelación
@@ -374,6 +359,37 @@ export const AgendaPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      <Modal isOpen={!!pastDateConfirm} onClose={() => setPastDateConfirm(null)}
+        title="Fecha en el pasado" width="sm">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3 rounded-lg px-4 py-3"
+               style={{ background: 'color-mix(in srgb,var(--color-warning) 10%,transparent)', color: 'var(--color-warning)' }}>
+            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium">Estás agendando en el pasado</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                El horario seleccionado (<strong style={{ color: 'var(--color-text)' }}>{pastDateLabel}</strong>) ya
+                transcurrió. ¿Deseas registrar esta cita de todas formas?
+              </p>
+            </div>
+          </div>
+          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            Esto es útil para registrar citas que no se agendaron a tiempo o para llevar un historial completo.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setPastDateConfirm(null)} className="luma-btn-ghost">Cancelar</button>
+            <button onClick={() => {
+              const iso = pastDateConfirm!
+              setPastDateConfirm(null)
+              setEditingApt(null); setDefStart(iso); setModalOpen(true)
+            }} className="luma-btn-primary">
+              Sí, registrar de todas formas
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       <WhatsAppPreviewModal
         isOpen={waBulkOpen}
         onClose={() => setWaBulkOpen(false)}
@@ -385,7 +401,36 @@ export const AgendaPage: React.FC = () => {
   )
 }
 
-// ── Banner de conexión ────────────────────────────────────────────────────────
+// ── Banner WhatsApp ───────────────────────────────────────────────────────────
+// Solo se muestra si está conectado o si hay un problema — no muestra nada
+// en estado 'disconnected' normal para no saturar la UI con banners.
+const WhatsAppBanner: React.FC<{ status: WaStatus }> = ({ status }) => {
+  // No mostrar nada si no está conectado — el admin sabe que puede configurarlo en Ajustes
+  if (status.status !== 'ready') return null
+
+  return (
+    <div className="mx-6 mt-2 rounded-xl px-4 py-2 flex items-center gap-3 border"
+         style={{
+           background:   'color-mix(in srgb,#1D9E75 8%,transparent)',
+           borderColor:  'color-mix(in srgb,#1D9E75 25%,transparent)',
+         }}>
+      <MessageCircle size={14} style={{ color: '#1D9E75', flexShrink: 0 }} />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium" style={{ color: '#1D9E75' }}>
+          WhatsApp conectado
+        </p>
+        {status.phone && (
+          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            Número del salón: <span className="font-mono">{status.phone}</span>
+            {' · '}Los recordatorios automáticos están activos.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Banner Google Calendar ────────────────────────────────────────────────────
 const ConnectionBanner: React.FC<{
   status: GcStatus; connecting: boolean; syncing: boolean; disconnecting: boolean
   onConnect: () => void; onSync: () => void; onDisconnect: () => void; onRefresh: () => void
@@ -400,7 +445,6 @@ const ConnectionBanner: React.FC<{
       </p>
     </div>
   )
-
   if (status.connected) return (
     <div className="mx-6 mt-3 rounded-xl px-4 py-2.5 flex items-center gap-3 border"
          style={{ background: 'color-mix(in srgb,var(--color-success) 8%,transparent)', borderColor: 'color-mix(in srgb,var(--color-success) 25%,transparent)' }}>
@@ -431,7 +475,6 @@ const ConnectionBanner: React.FC<{
       </div>
     </div>
   )
-
   return (
     <div className="mx-6 mt-3 rounded-xl px-4 py-2.5 flex items-center gap-3 border"
          style={{ background: 'color-mix(in srgb,var(--color-warning) 8%,transparent)', borderColor: 'color-mix(in srgb,var(--color-warning) 25%,transparent)' }}>
@@ -447,72 +490,52 @@ const ConnectionBanner: React.FC<{
   )
 }
 
-// ── Algoritmo de detección de solapamientos ───────────────────────────────────
-// Retorna cada cita con { colIndex, colCount } para posicionarlas lado a lado
-interface AptLayout extends Appointment {
-  colIndex: number
-  colCount: number
-}
+// ── Algoritmo de columnas para solapamientos ──────────────────────────────────
+interface AptLayout extends Appointment { colIndex: number; colCount: number }
 
 function computeLayout(apts: Appointment[]): AptLayout[] {
-  // Ordenar por inicio
   const sorted = [...apts].sort((a, b) =>
     new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
   )
-
   const result: AptLayout[] = []
-  // Grupos de citas que se solapan entre sí
   let group: Appointment[] = []
   let groupEnd = new Date(0)
 
   const processGroup = (g: Appointment[]) => {
-    // Construir columnas: asignar cada cita a la primer columna libre
     const cols: Appointment[][] = []
     for (const apt of g) {
       const aptStart = new Date(apt.start_at)
-      const aptEnd   = new Date(apt.end_at)
       let placed = false
       for (const col of cols) {
-        const lastInCol = col[col.length - 1]
-        if (new Date(lastInCol.end_at) <= aptStart) {
+        if (new Date(col[col.length - 1].end_at) <= aptStart) {
           col.push(apt); placed = true; break
         }
       }
       if (!placed) cols.push([apt])
     }
     const colCount = cols.length
-    cols.forEach((col, ci) => {
-      col.forEach(apt => {
-        result.push({ ...apt, colIndex: ci, colCount })
-      })
-    })
+    cols.forEach((col, ci) =>
+      col.forEach(apt => result.push({ ...apt, colIndex: ci, colCount }))
+    )
   }
 
   for (const apt of sorted) {
     const aptStart = new Date(apt.start_at)
     const aptEnd   = new Date(apt.end_at)
-
     if (group.length === 0) {
-      group.push(apt)
-      groupEnd = aptEnd
+      group.push(apt); groupEnd = aptEnd
     } else if (aptStart < groupEnd) {
-      // Se solapa con el grupo actual
-      group.push(apt)
-      if (aptEnd > groupEnd) groupEnd = aptEnd
+      group.push(apt); if (aptEnd > groupEnd) groupEnd = aptEnd
     } else {
-      // Nuevo grupo — procesar el anterior
-      processGroup(group)
-      group = [apt]
-      groupEnd = aptEnd
+      processGroup(group); group = [apt]; groupEnd = aptEnd
     }
   }
   if (group.length > 0) processGroup(group)
-
   return result
 }
 
-// ── Vista semanal ─────────────────────────────────────────────────────────────
-const HOURS  = Array.from({ length: 15 }, (_, i) => i + 7)
+// ── Vista semanal — 24 horas con scroll sincronizado ─────────────────────────
+const HOURS  = Array.from({ length: 24 }, (_, i) => i)
 const HOUR_H = 56
 
 const WeekView: React.FC<{
@@ -520,11 +543,20 @@ const WeekView: React.FC<{
   onClickSlot: (iso: string) => void; onClickApt: (apt: Appointment) => void
 }> = ({ current, appointments, onClickSlot, onClickApt }) => {
   const weekStart = startOfWeek(current, { weekStartsOn: 1 })
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const days      = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-  const aptTop    = (apt: Appointment) => {
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const now = new Date()
+    const targetHour = days.some(d => isToday(d)) ? Math.max(now.getHours() - 1, 0) : 7
+    el.scrollTop = targetHour * HOUR_H
+  }, [current])
+
+  const aptTop = (apt: Appointment) => {
     const d = parseISO(apt.start_at)
-    return ((d.getHours() - 7) + d.getMinutes() / 60) * HOUR_H
+    return (d.getHours() + d.getMinutes() / 60) * HOUR_H
   }
   const aptHeight = (apt: Appointment) =>
     Math.max(
@@ -532,36 +564,32 @@ const WeekView: React.FC<{
       24
     )
 
-  // Pre-calcular layout por día (columnas de solapamiento)
-  const layoutsByDay = useMemo(() => {
-    return days.map(day => {
+  const layoutsByDay = useMemo(() =>
+    days.map(day => {
       const dayApts = appointments.filter(a => isSameDay(parseISO(a.start_at), day))
       return computeLayout(dayApts)
-    })
-  }, [appointments, days])
+    }),
+    [appointments, days]
+  )
+
+  const nowLineTop = useMemo(() => {
+    const n = new Date()
+    return (n.getHours() + n.getMinutes() / 60) * HOUR_H
+  }, [])
+
+  const todayColIndex = days.findIndex(d => isToday(d))
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Columna de horas */}
-      <div className="flex-shrink-0 w-14 overflow-hidden" style={{ paddingTop: 40 }}>
-        <div style={{ position: 'relative', height: HOURS.length * HOUR_H }}>
-          {HOURS.map(h => (
-            <div key={h} className="absolute right-2 text-xs"
-                 style={{ top: (h - 7) * HOUR_H - 8, color: 'var(--color-text-muted)' }}>
-              {h}:00
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-auto">
-        {/* Header de días */}
-        <div className="grid grid-cols-7 sticky top-0 z-10 border-b"
-             style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', height: 40 }}>
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header días */}
+      <div className="flex flex-shrink-0 border-b"
+           style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+        <div className="flex-shrink-0 w-14" />
+        <div className="flex-1 grid grid-cols-7">
           {days.map(day => (
             <div key={day.toISOString()}
-              className="flex flex-col items-center justify-center text-xs font-medium border-r"
-              style={{ borderColor: 'var(--color-border)' }}>
+              className="flex flex-col items-center justify-center py-2 text-xs font-medium border-r"
+              style={{ borderColor: 'var(--color-border)', height: 44 }}>
               <span style={{ color: isToday(day) ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
                 {format(day, 'EEE', { locale: es }).toUpperCase()}
               </span>
@@ -572,28 +600,37 @@ const WeekView: React.FC<{
             </div>
           ))}
         </div>
+      </div>
 
-        {/* Grid de horas + citas */}
-        <div className="grid grid-cols-7"
-             style={{ position: 'relative', height: HOURS.length * HOUR_H }}>
+      {/* Cuerpo scrollable */}
+      <div ref={scrollRef} className="flex flex-1 overflow-auto">
 
-          {/* Celdas de fondo (clickeables para crear cita) */}
+        {/* Columna de horas */}
+        <div className="flex-shrink-0 w-14 relative" style={{ height: HOURS.length * HOUR_H }}>
+          {HOURS.map(h => (
+            <div key={h} className="absolute right-2 text-xs select-none"
+                 style={{ top: h === 0 ? 4 : h * HOUR_H - 8, color: 'var(--color-text-muted)' }}>
+              {String(h).padStart(2, '0')}:00
+            </div>
+          ))}
+        </div>
+
+        {/* Grid */}
+        <div className="flex-1 grid grid-cols-7 relative"
+             style={{ height: HOURS.length * HOUR_H, minWidth: 0 }}>
+
           {HOURS.map(h => (
             <React.Fragment key={h}>
               {days.map((_, di) => (
                 <div key={di} className="border-r border-b"
                   style={{
                     position: 'absolute',
-                    left: `${(di / 7) * 100}%`,
-                    top: (h - 7) * HOUR_H,
-                    width: `${100 / 7}%`,
-                    height: HOUR_H,
-                    borderColor: 'var(--color-border)',
-                    cursor: 'pointer',
+                    left: `${(di / 7) * 100}%`, top: h * HOUR_H,
+                    width: `${100 / 7}%`, height: HOUR_H,
+                    borderColor: 'var(--color-border)', cursor: 'pointer',
                   }}
                   onClick={() => {
-                    const d = new Date(days[di])
-                    d.setHours(h, 0, 0, 0)
+                    const d = new Date(days[di]); d.setHours(h, 0, 0, 0)
                     onClickSlot(d.toISOString())
                   }}
                 />
@@ -601,73 +638,61 @@ const WeekView: React.FC<{
             </React.Fragment>
           ))}
 
-          {/* Citas con layout de columnas */}
+          {/* Línea de ahora */}
+          {todayColIndex >= 0 && (
+            <div style={{
+              position: 'absolute', top: nowLineTop,
+              left: `${(todayColIndex / 7) * 100}%`, width: `${100 / 7}%`,
+              height: 2, background: 'var(--color-danger)', zIndex: 3, pointerEvents: 'none',
+            }}>
+              <div style={{
+                position: 'absolute', left: 0, top: -4,
+                width: 10, height: 10, borderRadius: '50%', background: 'var(--color-danger)',
+              }} />
+            </div>
+          )}
+
+          {/* Citas */}
           {days.map((_, di) => {
-            const dayLayouts = layoutsByDay[di]
-            // Ancho de la columna del día en porcentaje del total (1/7)
+            const dayLayouts  = layoutsByDay[di]
             const dayLeftPct  = (di / 7) * 100
             const dayWidthPct = 100 / 7
-
-            return dayLayouts.map((apt) => {
-              const PADDING  = 3   // px de margen entre citas
-              const colW     = (dayWidthPct / apt.colCount)   // % del total
-              const aptLeft  = dayLeftPct + colW * apt.colIndex
-              const aptWidth = colW
-
+            return dayLayouts.map(apt => {
+              const PADDING = 3
+              const colW    = dayWidthPct / apt.colCount
+              const aptLeft = dayLeftPct + colW * apt.colIndex
               return (
-                <div
-                  key={apt.id}
+                <div key={apt.id}
                   onClick={e => { e.stopPropagation(); onClickApt(apt) }}
                   className="absolute rounded-lg px-2 py-1.5 text-white text-xs cursor-pointer overflow-hidden shadow-md hover:brightness-110 transition-all flex flex-col gap-0.5 border border-white/10"
                   style={{
-                    left:       `calc(${aptLeft}% + ${PADDING}px)`,
-                    width:      `calc(${aptWidth}% - ${PADDING * 2}px)`,
-                    top:        aptTop(apt) + 2,
-                    height:     aptHeight(apt) - 4,
-                    background: aptColor(apt),
-                    zIndex:     2,
-                    // Resaltar al hover sin afectar vecinos
-                    transition: 'filter 0.15s, box-shadow 0.15s',
+                    left: `calc(${aptLeft}% + ${PADDING}px)`,
+                    width: `calc(${colW}% - ${PADDING * 2}px)`,
+                    top: aptTop(apt) + 2, height: aptHeight(apt) - 4,
+                    background: aptColor(apt), zIndex: 2,
                   }}
                   title={`${apt.title}${apt.client_name ? ' — ' + apt.client_name : ''}${apt.employee_name ? ' · ' + apt.employee_name : ''}`}
                 >
-                  {/* Header: sync icon + hora */}
                   <div className="flex items-center justify-between mb-0.5">
                     <div className="flex gap-1 items-center">
                       {getSyncIcon(apt.sync_status)}
-                      {!apt.employee_id && (
-                        <span title="Evento externo no vinculado">
-                          <Link2 size={10} className="text-white/70" />
-                        </span>
-                      )}
+                      {!apt.employee_id && <span title="Evento externo"><Link2 size={10} className="text-white/70" /></span>}
                     </div>
                     <span className="text-[9px] font-bold opacity-70 whitespace-nowrap">
                       {format(parseISO(apt.start_at), 'H:mm')}
                     </span>
                   </div>
-
-                  <p className="font-bold truncate leading-tight text-[11px] drop-shadow-sm">
-                    {apt.title}
-                  </p>
-
+                  <p className="font-bold truncate leading-tight text-[11px] drop-shadow-sm">{apt.title}</p>
                   {apt.client_name && (
-                    <p className="opacity-90 truncate leading-none text-[10px] font-medium italic">
-                      • {apt.client_name}
-                    </p>
+                    <p className="opacity-90 truncate leading-none text-[10px] font-medium italic">• {apt.client_name}</p>
                   )}
-
-                  {/* Mostrar empleado solo si hay espacio (cita alta y columna no muy angosta) */}
                   {aptHeight(apt) > 45 && apt.colCount <= 2 && apt.employee_name && (
                     <p className="mt-auto opacity-70 truncate text-[9px] uppercase tracking-wider font-semibold">
                       {apt.employee_name.split(' ')[0]}
                     </p>
                   )}
-
-                  {/* Si la columna es muy angosta (3+ solapamientos) mostrar solo hora */}
                   {apt.colCount >= 3 && (
-                    <p className="text-[9px] opacity-60 truncate">
-                      {format(parseISO(apt.end_at), 'H:mm')}
-                    </p>
+                    <p className="text-[9px] opacity-60 truncate">{format(parseISO(apt.end_at), 'H:mm')}</p>
                   )}
                 </div>
               )
@@ -690,7 +715,8 @@ const MonthView: React.FC<{
   const weeks: Date[][] = []
   let day = gridStart
   while (day <= gridEnd) {
-    const week: Date[] = []; for (let i=0;i<7;i++){week.push(day);day=addDays(day,1)}
+    const week: Date[] = []
+    for (let i = 0; i < 7; i++) { week.push(day); day = addDays(day, 1) }
     weeks.push(week)
   }
   const aptsByDay = (d: Date) => appointments.filter(a => isSameDay(parseISO(a.start_at), d))
@@ -719,7 +745,7 @@ const MonthView: React.FC<{
                     </span>
                   </div>
                   <div className="flex flex-col gap-0.5 overflow-hidden">
-                    {apts.slice(0,3).map(apt => (
+                    {apts.slice(0, 3).map(apt => (
                       <div key={apt.id}
                         onClick={e => { e.stopPropagation(); onClickApt(apt) }}
                         className="rounded text-white px-1 truncate cursor-pointer hover:opacity-80"
@@ -727,7 +753,9 @@ const MonthView: React.FC<{
                         {format(parseISO(apt.start_at), 'H:mm')} {apt.title}
                       </div>
                     ))}
-                    {apts.length > 3 && <span style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>+{apts.length-3} más</span>}
+                    {apts.length > 3 && (
+                      <span style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>+{apts.length - 3} más</span>
+                    )}
                   </div>
                 </div>
               )
@@ -735,7 +763,6 @@ const MonthView: React.FC<{
           </div>
         ))}
       </div>
-      
     </div>
   )
 }

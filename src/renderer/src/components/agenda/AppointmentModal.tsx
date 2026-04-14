@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Save, Loader2, Trash2, Clock, User, UserRound, Scissors, AlignLeft, X, Search,MessageCircle } from 'lucide-react'
+import { Save, Loader2, Trash2, Clock, User, UserRound, Scissors, AlignLeft, X, Search,MessageCircle, AlertCircle } from 'lucide-react'
 import type { Employee, Client, Service, Appointment } from '../../types'
 import { Modal } from '../ui/Modal'
 import { Spinner } from '../ui/index'
@@ -177,6 +177,7 @@ export const AppointmentModal: React.FC<Props> = ({
   const [error, setError]       = useState<string | null>(null)
   const [endDayWarning, setEndDayWarning] = useState(false)
   const [waPreviewOpen, setWaPreviewOpen] = useState(false)
+  const [pastStartWarning, setPastStartWarning] = useState(false)
 
   // Cargar clientes y servicios
   useEffect(() => {
@@ -192,6 +193,7 @@ export const AppointmentModal: React.FC<Props> = ({
   // Resetear formulario al abrir — PRESERVAR todos los valores del initial
   useEffect(() => {
     if (!isOpen) return
+    setPastStartWarning(false)
     if (initial) {
       // Convertir a formato local para los inputs datetime-local
       const startLocal = toLocalDatetimeInput(initial.start_at)
@@ -286,6 +288,8 @@ export const AppointmentModal: React.FC<Props> = ({
       set('end_at', newEnd)
       setEndDayWarning(false)
     }
+    // ── NUEVO: advertencia si la hora de inicio ya pasó ──────────────────
+    setPastStartWarning(new Date(newStart) < new Date())
   }
 
   const handleSave = async () => {
@@ -384,6 +388,13 @@ export const AppointmentModal: React.FC<Props> = ({
           <div className="rounded-lg px-3 py-2 text-xs"
                style={{ background: 'color-mix(in srgb,var(--color-warning) 12%,transparent)', color: 'var(--color-warning)' }}>
             ⚠️ El servicio excedería la medianoche. La hora de fin se ajustó a las 23:30 del mismo día.
+          </div>
+        )}
+        {pastStartWarning && (
+          <div className="rounded-lg px-3 py-2 text-xs flex items-center gap-2"
+              style={{ background: 'color-mix(in srgb,var(--color-warning) 10%,transparent)', color: 'var(--color-warning)' }}>
+            <AlertCircle size={12} className="flex-shrink-0" />
+            La hora de inicio ya transcurrió. Se registrará como cita en el pasado.
           </div>
         )}
 

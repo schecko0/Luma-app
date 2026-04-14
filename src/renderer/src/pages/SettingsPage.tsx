@@ -563,7 +563,7 @@ export const SettingsPage: React.FC = () => {
           {activeTab === 'whatsapp' && (
             <>
               {/* Conexión */}
-              <Section title="Vinculación de WhatsApp" icon={<MessageCircle size={16} />}>
+              <Section title="Vinculación de WhatsApp" icon={<MessageCircle size={16} />}>                
                 {/* Estado */}
                 <div className="flex items-center gap-3 p-3 rounded-lg"
                     style={{

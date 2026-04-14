@@ -68,30 +68,18 @@ export function registerCashRegisterHandlers(ipcMain: IpcMain) {
       const reg = db.prepare("SELECT * FROM cash_registers WHERE id = ? AND status = 'open'").get(payload.register_id) as CashRegister | undefined
       if (!reg) return { ok: false, error: 'Caja no encontrada o ya está cerrada.' }
 
-      // Calcular totales del sistema por tipo de pago
-      // (efectivo inicial + movimientos in/out + pagos de facturas)
+      // Calcular totales del sistema basados en el FLUJO REAL de movimientos
+      // Esto evita errores con cancelaciones que se restan doble
       const calcTotals = (method: string) => {
-        const invoiceTotal = db.prepare(`
-          SELECT COALESCE(SUM(ip.amount), 0) as total
-          FROM invoice_payments ip
-          JOIN invoices i ON i.id = ip.invoice_id
-          WHERE ip.payment_method = ?
-            AND i.register_id = ?
-            AND i.status != 'cancelled'
-        `).get(method, payload.register_id) as { total: number }
+        const flow = db.prepare(`
+          SELECT 
+            SUM(CASE WHEN type = 'in' THEN amount ELSE 0 END) as total_in,
+            SUM(CASE WHEN type = 'out' THEN amount ELSE 0 END) as total_out
+          FROM cash_movements
+          WHERE register_id = ? AND payment_method = ?
+        `).get(payload.register_id, method) as { total_in: number; total_out: number }
 
-        const movIn = db.prepare(`
-          SELECT COALESCE(SUM(amount), 0) as total FROM cash_movements
-          WHERE register_id = ? AND payment_method = ? AND type = 'in'
-            AND invoice_id IS NULL
-        `).get(payload.register_id, method) as { total: number }
-
-        const movOut = db.prepare(`
-          SELECT COALESCE(SUM(amount), 0) as total FROM cash_movements
-          WHERE register_id = ? AND payment_method = ? AND type = 'out'
-        `).get(payload.register_id, method) as { total: number }
-
-        return invoiceTotal.total + movIn.total - movOut.total
+        return (flow.total_in || 0) - (flow.total_out || 0)
       }
 
       const systemCash     = reg.initial_cash + calcTotals('cash')
@@ -263,31 +251,61 @@ export function registerCashRegisterHandlers(ipcMain: IpcMain) {
       const reg = db.prepare('SELECT * FROM cash_registers WHERE id = ?').get(register_id) as CashRegister | undefined
       if (!reg) return { ok: false, error: 'Caja no encontrada.' }
 
-      // Ventas por método de pago (solo facturas pagadas, no canceladas)
-      const salesByMethod = db.prepare(`
-        SELECT ip.payment_method, COALESCE(SUM(ip.amount),0) as total
+      // ── Ventas de facturas por método ──────────────────────────────────────
+      const invoiceSales = db.prepare(`
+        SELECT ip.payment_method, COALESCE(SUM(ip.amount), 0) AS total
         FROM invoice_payments ip
         JOIN invoices i ON i.id = ip.invoice_id
         WHERE i.register_id = ? AND i.status != 'cancelled'
         GROUP BY ip.payment_method
       `).all(register_id) as { payment_method: string; total: number }[]
 
-      // Movimientos manuales
+      // ── Movimientos manuales por método (entradas - salidas) ───────────────
+      const manualMovements = db.prepare(`
+        SELECT
+          payment_method,
+          COALESCE(SUM(CASE WHEN type = 'in'  THEN amount ELSE 0 END), 0) AS total_in,
+          COALESCE(SUM(CASE WHEN type = 'out' THEN amount ELSE 0 END), 0) AS total_out
+        FROM cash_movements
+        WHERE register_id = ? AND invoice_id IS NULL
+        GROUP BY payment_method
+      `).all(register_id) as { payment_method: string; total_in: number; total_out: number }[]
+
+      // ── Combinar: ventas + movimientos manuales netos por método ──────────
+      const methods = ['cash', 'card', 'transfer']
+      const salesByMethod = methods.map(method => {
+        const invoiceTotal = invoiceSales.find(r => r.payment_method === method)?.total ?? 0
+        const manual       = manualMovements.find(r => r.payment_method === method)
+        const manualNet    = (manual?.total_in ?? 0) - (manual?.total_out ?? 0)
+        return {
+          payment_method: method,
+          total:          invoiceTotal + manualNet,
+          // Desglose adicional para el cuadre de cierre
+          from_invoices:  invoiceTotal,
+          from_manual_in: manual?.total_in  ?? 0,
+          from_manual_out: manual?.total_out ?? 0,
+        }
+      })
+
+      // ── Contadores de facturas ─────────────────────────────────────────────
+      const invoiceCounts = db.prepare(`
+        SELECT status, COUNT(*) as count, COALESCE(SUM(total), 0) as total
+        FROM invoices WHERE register_id = ?
+        GROUP BY status
+      `).all(register_id) as { status: string; count: number; total: number }[]
+
+      // ── Movimientos completos (para el array movements del cierre) ─────────
       const movements = db.prepare(`
-        SELECT type, payment_method, COALESCE(SUM(amount),0) as total
+        SELECT type, payment_method, COALESCE(SUM(amount), 0) as total
         FROM cash_movements
         WHERE register_id = ? AND invoice_id IS NULL
         GROUP BY type, payment_method
       `).all(register_id) as { type: string; payment_method: string; total: number }[]
 
-      // Contadores de facturas
-      const invoiceCounts = db.prepare(`
-        SELECT status, COUNT(*) as count, COALESCE(SUM(total),0) as total
-        FROM invoices WHERE register_id = ?
-        GROUP BY status
-      `).all(register_id) as { status: string; count: number; total: number }[]
-
-      return { ok: true, data: { register: reg, salesByMethod, movements, invoiceCounts } }
+      return {
+        ok: true,
+        data: { register: reg, salesByMethod, movements, invoiceCounts },
+      }
     } catch (err: unknown) { return { ok: false, error: String(err) } }
   })
 }

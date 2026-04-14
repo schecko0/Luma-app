@@ -553,55 +553,56 @@ export function getWhatsAppStatus() {
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIRMACIÓN DE CITA: texto + imagen del logo al crear una nueva cita
 // ─────────────────────────────────────────────────────────────────────────────
-export async function sendConfirmationMessage(appointmentId: number): Promise<'sent' | 'skipped_not_enabled' | 'skipped_not_connected' | 'skipped_no_phone' | 'skipped_no_template' | 'error'> {
-  // 1. Verificar que esté activado en settings
-  if (getSetting('wa_confirm_on_create', 'false') !== 'true') return 'skipped_not_enabled'
+export async function sendConfirmationMessage(
+  appointmentId: number
+): Promise<'sent' | 'skipped_not_enabled' | 'skipped_not_connected' | 'skipped_no_phone' | 'skipped_no_template' | 'error'> {
 
-  // 2. Verificar sesión activa
+  if (getSetting('wa_confirm_on_create', 'false') !== 'true') return 'skipped_not_enabled'
   if (waStatus !== 'ready' || !waClient) return 'skipped_not_connected'
 
-  // 3. Obtener template
   const template = getSetting('wa_template_confirm', '')
   if (!template.trim()) return 'skipped_no_template'
 
-  // 4. Obtener datos de la cita
   const vars = getAppointmentVars(appointmentId)
   if (!vars || !vars._phone) return 'skipped_no_phone'
 
-  const waPhone = formatPhoneForWA(vars._phone, vars._countryCode)
-  if (!waPhone) return 'skipped_no_phone'
+  const formattedPhone = formatPhoneForWA(vars._phone, vars._countryCode)
+  if (!formattedPhone) return 'skipped_no_phone'
 
-  // 5. Renderizar mensaje
+  // Obtener client_id real de la cita para el log
+  const aptRow = getDb()
+    .prepare('SELECT client_id FROM appointments WHERE id = ?')
+    .get(appointmentId) as { client_id: number | null } | undefined
+
   const message = renderTemplate(template, vars)
 
-  // 6. Intentar enviar con imagen si hay logo configurado
+  // Insertar log ANTES del envío para tener el id
+  const logId = insertLog({
+    appointmentId,
+    clientId: aptRow?.client_id ?? null,  // ← FIX: client_id real
+    phone:    formattedPhone,
+    reminderType:    'manual',
+    messagePreview:  `[CONFIRMACIÓN] ${message.slice(0, 120)}`,
+    status:          'pending',
+  })
+
   try {
     const logoPath = getSetting('wa_logo_path', '')
-
     if (logoPath) {
-      // Enviar imagen + caption
       const media = MessageMedia.fromFilePath(logoPath)
-      await waClient.sendMessage(waPhone, media, { caption: message })
+      await waClient.sendMessage(formattedPhone, media, { caption: message })
     } else {
-      // Sin logo: solo texto
-      await waClient.sendMessage(waPhone, message)
+      await waClient.sendMessage(formattedPhone, message)
     }
 
-    // Registrar en log
-    insertLog({
-      appointmentId,
-      clientId: null,
-      phone: waPhone,
-      reminderType: 'manual',
-      messagePreview: `[CONFIRMACIÓN] ${message.slice(0, 100)}`,
-      status: 'pending',
-    })
-
-    logger.info(`[WA] Confirmación enviada a ${waPhone} para cita #${appointmentId}`)
+    // ← FIX: marcar como enviado correctamente
+    markLogSent(logId)
+    logger.info(`[WA] Confirmación enviada a ${formattedPhone} para cita #${appointmentId}`)
     return 'sent'
   } catch (err: any) {
     const errMsg = err?.message ?? String(err)
-    logger.error(`[WA] Error enviando confirmación a ${waPhone}: ${errMsg}`)
+    markLogFailed(logId, errMsg)  // ← también marcar el fallo correctamente
+    logger.error(`[WA] Error enviando confirmación a ${formattedPhone}: ${errMsg}`)
     return 'error'
   }
 }

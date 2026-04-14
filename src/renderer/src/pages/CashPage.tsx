@@ -144,14 +144,26 @@ const OpenCashForm: React.FC<{ onOpened: () => void }> = ({ onOpened }) => {
 }
 
 // ── Vista caja abierta ────────────────────────────────────────────────────────
+interface CashSummary {
+  register: CashRegister;
+  salesByMethod: {
+    payment_method: string;
+    total: number;
+    from_invoices: number;
+    from_manual_in: number;
+    from_manual_out: number;
+  }[];
+  movements: { type: string; payment_method: string; total: number }[];
+  invoiceCounts: { status: string; count: number; total: number }[];
+}
+
 const OpenCashView: React.FC<{ register: CashRegister; onRefresh: () => void; onClose: () => void }> = ({ register, onRefresh, onClose }) => {
-  const [summary, setSummary]         = useState<Record<string, unknown> | null>(null)
+  const [summary, setSummary]         = useState<CashSummary | null>(null)
   const [movements, setMovements]     = useState<PaginatedResult<CashMovement> | null>(null)
   const [categories, setCategories]   = useState<CashMovementCategory[]>([])
   const [movPage, setMovPage]         = useState(1)
   const [showMovForm, setShowMovForm] = useState(false)
   const [showCloseForm, setShowClose] = useState(false)
-  // ← NUEVO: modal de detalle de movimiento
   const [detailMov, setDetailMov]     = useState<CashMovement | null>(null)
 
   const loadAll = useCallback(async () => {
@@ -160,31 +172,41 @@ const OpenCashView: React.FC<{ register: CashRegister; onRefresh: () => void; on
       window.electronAPI.cash.listMovements(register.id, { page: movPage, pageSize: 20 }),
       window.electronAPI.cash.getCategories(),
     ])
-    if (sumRes.ok) setSummary(sumRes.data as Record<string, unknown>)
+    if (sumRes.ok) setSummary(sumRes.data as CashSummary)
     if (movRes.ok) setMovements(movRes.data as PaginatedResult<CashMovement>)
     if (catRes.ok) setCategories(catRes.data as CashMovementCategory[])
   }, [register.id, movPage])
 
   useEffect(() => { loadAll() }, [loadAll])
 
-  const salesByMethod = (summary?.salesByMethod as { payment_method: string; total: number }[]) ?? []
-  const totalSales    = salesByMethod.reduce((s, r) => s + r.total, 0)
-  const getSale       = (m: string) => salesByMethod.find(r => r.payment_method === m)?.total ?? 0
+  const salesByMethod = summary?.salesByMethod ?? []
+  const netFlow       = salesByMethod.reduce((s, r) => s + r.total, 0)
+  const getNet        = (m: string) => salesByMethod.find(r => r.payment_method === m)?.total ?? 0
+
+  // Desglose global para diagnóstico
+  const grossInvoices = salesByMethod.reduce((s, r) => s + r.from_invoices, 0)
+  const manualIn      = salesByMethod.reduce((s, r) => s + r.from_manual_in, 0)
+  const manualOut     = salesByMethod.reduce((s, r) => s + r.from_manual_out, 0)
+  
+  // Calcular cancelaciones desde movimientos (para que coincida con lo que el usuario ve en tabla)
+  const cancelledAmt  = summary?.movements
+    .filter(m => m.type === 'out' && m.payment_method === 'cash') // Simplificado o totalizado
+    .reduce((s, m) => s + m.total, 0) ?? 0
+
+  // El total de cancelaciones real viene de invoiceCounts si status === 'cancelled'
+  const cancelledInvoices = summary?.invoiceCounts.find(c => c.status === 'cancelled')?.total ?? 0
 
   return (
     <div className="p-6 flex flex-col gap-6">
 
-      {/* ── Cards de resumen (ahora 4: saldo inicial + 3 métodos) ───── */}
+      {/* ── Cards de resumen (Saldo inicial + Flujos Netos por método) ───── */}
       <div className="grid grid-cols-4 gap-4">
-        {/* Card saldo inicial ← NUEVO */}
         <div className="luma-surface p-4 flex flex-col gap-2">
           <div className="flex items-center gap-2" style={{ color: 'var(--color-text-muted)' }}>
             <DollarSign size={16} />
             <span className="text-xs font-medium">Saldo inicial</span>
           </div>
-          <p className="text-2xl font-bold" style={{ color: 'var(--color-text)' }}>
-            {fmt(register.initial_cash)}
-          </p>
+          <p className="text-2xl font-bold" style={{ color: 'var(--color-text)' }}>{fmt(register.initial_cash)}</p>
           <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>efectivo al abrir</p>
         </div>
 
@@ -196,31 +218,59 @@ const OpenCashView: React.FC<{ register: CashRegister; onRefresh: () => void; on
           <div key={method} className="luma-surface p-4 flex flex-col gap-2">
             <div className="flex items-center gap-2" style={{ color }}>
               {icon}
-              <span className="text-xs font-medium">{label}</span>
+              <span className="text-xs font-medium">{label} Neto</span>
             </div>
-            <p className="text-2xl font-bold" style={{ color: 'var(--color-text)' }}>{fmt(getSale(method))}</p>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>ventas del turno</p>
+            <p className="text-2xl font-bold" style={{ color: 'var(--color-text)' }}>{fmt(getNet(method))}</p>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>disponible en caja</p>
           </div>
         ))}
       </div>
 
-      {/* Totales + acciones */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Total ventas del turno</p>
-          <p className="text-3xl font-bold font-display" style={{ color: 'var(--color-accent)' }}>{fmt(totalSales)}</p>
+      {/* Panel de Desglose Matemático para Transparencia */}
+      <div className="grid grid-cols-4 gap-4">
+        <div className="col-span-3 luma-surface p-4 flex flex-wrap gap-8 items-center bg-white/5 border-dashed border-2" style={{ borderColor: 'var(--color-border)' }}>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: 'var(--color-text-muted)' }}>(+) Ventas Pagadas</p>
+            <p className="text-lg font-semibold" style={{ color: 'var(--color-success)' }}>{fmt(grossInvoices)}</p>
+          </div>
+          <div className="text-xl opacity-30">+</div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: 'var(--color-text-muted)' }}>Entradas Manuales</p>
+            <p className="text-lg font-semibold" style={{ color: 'var(--color-info)' }}>{fmt(manualIn)}</p>
+          </div>
+          <div className="text-xl opacity-30">-</div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: 'var(--color-text-muted)' }}>Salidas / Gastos</p>
+            <p className="text-lg font-semibold" style={{ color: 'var(--color-danger)' }}>{fmt(manualOut)}</p>
+          </div>
+          {cancelledInvoices > 0 && (
+            <>
+              <div className="text-xl opacity-30">-</div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: 'var(--color-warning)' }}>Cancelaciones</p>
+                <p className="text-lg font-semibold" style={{ color: 'var(--color-warning)' }}>{fmt(cancelledInvoices)}</p>
+              </div>
+            </>
+          )}
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowMovForm(true)} className="luma-btn text-sm border"
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}>
-            <Plus size={14} /> Movimiento
-          </button>
-          <button onClick={onRefresh} className="luma-btn-ghost p-2"><RefreshCw size={14} /></button>
-          <button onClick={() => setShowClose(true)} className="luma-btn text-sm text-white"
-            style={{ background: 'var(--color-danger)' }}>
-            <Lock size={14} /> Cerrar caja
-          </button>
+        
+        <div className="luma-surface p-4 flex flex-col justify-center border-l-4" style={{ borderColor: 'var(--color-accent)' }}>
+           <p className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Saldo Neto Turno</p>
+           <p className="text-2xl font-bold font-display" style={{ color: 'var(--color-accent)' }}>{fmt(netFlow)}</p>
         </div>
+      </div>
+
+      {/* Acciones */}
+      <div className="flex items-center justify-end gap-2">
+        <button onClick={() => setShowMovForm(true)} className="luma-btn text-sm border"
+          style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}>
+          <Plus size={14} /> Registrar Movimiento
+        </button>
+        <button onClick={onRefresh} className="luma-btn-ghost p-2"><RefreshCw size={14} /></button>
+        <button onClick={() => setShowClose(true)} className="luma-btn text-sm text-white"
+          style={{ background: 'var(--color-danger)' }}>
+          <Lock size={14} /> Cerrar turno (Corte)
+        </button>
       </div>
 
       {showMovForm && (
@@ -235,74 +285,80 @@ const OpenCashView: React.FC<{ register: CashRegister; onRefresh: () => void; on
           onCancel={() => setShowClose(false)} />
       )}
 
-      {/* Tabla de movimientos */}
-      <div className="luma-surface overflow-hidden">
-        <div className="px-4 py-3 border-b flex items-center justify-between"
-             style={{ borderColor: 'var(--color-border)' }}>
-          <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Movimientos del turno</span>
+      {/* Contenedor de Tablas (Reordenado: Ventas primero) */}
+      <div className="grid grid-cols-1 gap-6">
+        
+        {/* Tabla de Facturas del Turno (PRIORITARIA) */}
+        <div className="luma-surface overflow-hidden">
+          <div className="px-4 py-3 border-b flex items-center justify-between"
+               style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface-2)' }}>
+            <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Ventas / Facturas del Turno</span>
+            <Badge variant="muted">Control de Ventas</Badge>
+          </div>
+          <InvoiceListTable registerId={register.id} />
         </div>
-        {movements?.items.length === 0 ? (
-          <p className="text-center py-8 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            Sin movimientos registrados aún.
-          </p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                {['Tipo', 'Descripción / Servicio', 'Método', 'Monto', 'Hora', 'Acción'].map(h => (
-                  <th key={h} className="text-left px-4 py-2 text-xs font-medium"
-                      style={{ color: 'var(--color-text-muted)' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {movements?.items.map((mov, i) => (
-                <tr key={mov.id} className="hover:bg-white/5"
-                    style={{ borderBottom: i < (movements.items.length - 1) ? '1px solid var(--color-border)' : 'none' }}>
-                  <td className="px-4 py-2">
-                    {mov.type === 'in'
-                      ? <Badge variant="success"><ArrowUp size={10} /> Entrada</Badge>
-                      : <Badge variant="danger"><ArrowDown size={10} /> Salida</Badge>}
-                  </td>
-                  {/* Descripción: muestra descripción o categoría, NO "—" cuando viene de venta */}
-                  <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text)' }}>
-                    {mov.description
-                      ? mov.description
-                      : mov.category_name
-                        ? mov.category_name
-                        : <span style={{ color: 'var(--color-text-muted)' }}>Sin descripción</span>
-                    }
-                    {mov.invoice_id && (
-                      <span className="ml-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>(venta)</span>
-                    )}
-                  </td>
-                  {/* Método traducido al español */}
-                  <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                    {PAYMENT_LABELS[mov.payment_method] ?? mov.payment_method}
-                  </td>
-                  <td className="px-4 py-2 font-medium"
-                      style={{ color: mov.type === 'in' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                    {mov.type === 'in' ? '+' : '-'}{fmt(mov.amount)}
-                  </td>
-                  <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                    {new Date(mov.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                  {/* ← NUEVO: botón ver detalle */}
-                  <td className="px-4 py-2">
-                    <button onClick={() => setDetailMov(mov)}
-                      className="luma-btn-ghost p-1.5 rounded-lg" title="Ver detalle">
-                      <FileText size={13} />
-                    </button>
-                  </td>
+
+        {/* Tabla de movimientos (SECUNDARIA) */}
+        <div className="luma-surface overflow-hidden">
+          <div className="px-4 py-3 border-b flex items-center justify-between"
+               style={{ borderColor: 'var(--color-border)' }}>
+            <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Otros Movimientos y Auditoría</span>
+          </div>
+          {movements?.items.length === 0 ? (
+            <p className="text-center py-8 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              Sin movimientos registrados aún.
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+                  {['Tipo', 'Descripción / Referencia', 'Método', 'Monto', 'Hora', 'Acción'].map(h => (
+                    <th key={h} className="text-left px-4 py-2 text-xs font-medium"
+                        style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {movements && <Paginator page={movPage} pageSize={20} total={movements.total} onChange={setMovPage} />}
+              </thead>
+              <tbody>
+                {movements?.items.map((mov, i) => (
+                  <tr key={mov.id} className="hover:bg-white/5"
+                      style={{ borderBottom: i < (movements.items.length - 1) ? '1px solid var(--color-border)' : 'none' }}>
+                    <td className="px-4 py-2">
+                      {mov.type === 'in'
+                        ? <Badge variant="success"><ArrowUp size={10} /> Entrada</Badge>
+                        : <Badge variant="danger"><ArrowDown size={10} /> Salida</Badge>}
+                    </td>
+                    <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text)' }}>
+                      {mov.description ?? mov.category_name ?? <span style={{ color: 'var(--color-text-muted)' }}>Sin descripción</span>}
+                      {mov.invoice_id && (
+                        <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10" style={{ color: 'var(--color-text-muted)' }}>V-#{mov.invoice_id}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      {PAYMENT_LABELS[mov.payment_method] ?? mov.payment_method}
+                    </td>
+                    <td className="px-4 py-2 font-medium"
+                        style={{ color: mov.type === 'in' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                      {mov.type === 'in' ? '+' : '-'}{fmt(mov.amount)}
+                    </td>
+                    <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      {new Date(mov.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button onClick={() => setDetailMov(mov)}
+                        className="luma-btn-ghost p-1.5 rounded-lg" title="Ver detalle">
+                        <FileText size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {movements && <Paginator page={movPage} pageSize={20} total={movements.total} onChange={setMovPage} />}
+        </div>
       </div>
 
-      {/* Modal detalle de movimiento ← NUEVO */}
+      {/* Modal detalle de movimiento */}
       <Modal isOpen={!!detailMov} onClose={() => setDetailMov(null)}
         title="Detalle del movimiento" width="sm">
         {detailMov && (
@@ -328,11 +384,150 @@ const OpenCashView: React.FC<{ register: CashRegister; onRefresh: () => void; on
                 <p className="text-sm" style={{ color: 'var(--color-text)' }}>{detailMov.description}</p>
               </div>
             )}
-            {detailMov.invoice_id && (
-              <div className="flex items-center gap-2 text-xs rounded-lg px-3 py-2"
-                   style={{ background: 'color-mix(in srgb,var(--color-info) 10%,transparent)', color: 'var(--color-info)' }}>
-                <FileText size={12} />
-                Movimiento generado por venta (factura interna #{detailMov.invoice_id})
+          </div>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+// ── Tabla de Facturas del Turno (Componente de apoyo mejorado) ─────────────
+const InvoiceListTable: React.FC<{ registerId: number }> = ({ registerId }) => {
+  const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [search, setSearch]     = useState('')
+  const [selectedInv, setSelectedInv] = useState<Invoice | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const res = await window.electronAPI.invoices.list({ 
+      registerId, page: 1, pageSize: 50, search: search || undefined 
+    })
+    if (res.ok) setInvoices(res.data.items as Invoice[])
+    setLoading(false)
+  }, [registerId, search])
+
+  useEffect(() => { load() }, [load])
+
+  const handleOpenDetail = async (id: number) => {
+    const res = await window.electronAPI.invoices.getById(id)
+    if (res.ok) setSelectedInv(res.data as Invoice)
+  }
+
+  return (
+    <div className="flex flex-col">
+      <div className="px-4 py-2 bg-white/5 border-b flex items-center gap-2" style={{ borderColor: 'var(--color-border)' }}>
+        <input type="text" placeholder="Buscar folio o cliente..." value={search}
+          onChange={e => setSearch(e.target.value)} 
+          className="luma-input text-xs py-1.5 w-64" data-selectable />
+        {loading && <Loader2 size={14} className="animate-spin opacity-50" />}
+      </div>
+
+      <table className="w-full text-sm">
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+            {['Folio', 'Cliente', 'Fecha', 'Método', 'Estado', 'Total', 'Acción'].map(h => (
+              <th key={h} className="text-left px-4 py-2 text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {invoices.length === 0 ? (
+            <tr><td colSpan={7} className="p-8 text-center text-sm text-muted">No se encontraron ventas.</td></tr>
+          ) : (
+            invoices.map((inv, i) => (
+              <tr key={inv.id} className="hover:bg-white/5" style={{ borderBottom: i < invoices.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                <td className="px-4 py-2 font-medium" style={{ color: 'var(--color-text)' }}>#{inv.folio}</td>
+                <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>{inv.client_name ?? 'Público General'}</td>
+                <td className="px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  {new Date(inv.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
+                </td>
+                <td className="px-4 py-2 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                  {(inv as any).payment_methods_list?.split(', ').map((m: string) => PAYMENT_LABELS[m] || m).join(', ') || '—'}
+                </td>
+                <td className="px-4 py-2">
+                  <Badge variant={inv.status === 'paid' ? 'success' : inv.status === 'cancelled' ? 'danger' : 'muted'}>
+                    {inv.status === 'paid' ? 'Pagada' : inv.status === 'cancelled' ? 'Cancelada' : inv.status}
+                  </Badge>
+                </td>
+                <td className="px-4 py-2 font-medium text-right" style={{ 
+                  color: inv.status === 'cancelled' ? 'var(--color-danger)' : 'var(--color-text)', 
+                  textDecoration: inv.status === 'cancelled' ? 'line-through' : 'none'
+                }}>
+                  {fmt(inv.total)}
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <button onClick={() => handleOpenDetail(inv.id)}
+                    className="luma-btn-ghost p-1.5 rounded-lg" title="Ver nota completa">
+                    <FileText size={13} />
+                  </button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+
+      {/* Modal Detalle de Factura */}
+      <Modal isOpen={!!selectedInv} onClose={() => setSelectedInv(null)} title={`Detalle de Venta #${selectedInv?.folio}`} width="md">
+        {selectedInv && (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="luma-surface p-3 bg-white/5">
+                <p className="text-[10px] uppercase text-muted font-bold mb-1">Cliente</p>
+                <p className="text-sm font-medium">{selectedInv.client_name || 'Público General'}</p>
+              </div>
+              <div className="luma-surface p-3 bg-white/5">
+                <p className="text-[10px] uppercase text-muted font-bold mb-1">Fecha y Hora</p>
+                <p className="text-sm font-medium">{new Date(selectedInv.created_at).toLocaleString()}</p>
+              </div>
+            </div>
+
+            <div className="luma-surface overflow-hidden border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-white/5 border-b">
+                    <th className="text-left px-3 py-2">Servicio</th>
+                    <th className="text-right px-3 py-2">P.U.</th>
+                    <th className="text-right px-3 py-2">Cant.</th>
+                    <th className="text-right px-3 py-2">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedInv.services?.map(s => (
+                    <tr key={s.id} className="border-b last:border-0">
+                      <td className="px-3 py-2">{s.service_name}</td>
+                      <td className="px-3 py-2 text-right">{fmt(s.unit_price)}</td>
+                      <td className="px-3 py-2 text-right">x{s.quantity}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmt(s.line_total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end">
+               <div className="w-48 flex flex-col gap-1">
+                 <div className="flex justify-between text-xs text-muted"><span>Subtotal:</span><span>{fmt(selectedInv.subtotal)}</span></div>
+                 {selectedInv.tax_amount > 0 && <div className="flex justify-between text-xs text-muted"><span>IVA:</span><span>{fmt(selectedInv.tax_amount)}</span></div>}
+                 <div className="flex justify-between text-lg font-bold border-t pt-1 mt-1"><span>Total:</span><span>{fmt(selectedInv.total)}</span></div>
+               </div>
+            </div>
+
+            <div className="luma-surface p-3 bg-white/5 border-l-4 border-success">
+              <p className="text-[10px] uppercase text-muted font-bold mb-2">Pagos registrados</p>
+              {selectedInv.payments?.map(p => (
+                <div key={p.id} className="flex justify-between text-sm">
+                  <span>{PAYMENT_LABELS[p.payment_method] || p.payment_method} {p.reference && <span className="text-[10px] opacity-50">({p.reference})</span>}</span>
+                  <span className="font-medium">{fmt(p.amount)}</span>
+                </div>
+              ))}
+            </div>
+
+            {selectedInv.status === 'cancelled' && (
+              <div className="luma-surface p-3 bg-danger/10 border-l-4 border-danger">
+                <p className="text-[10px] uppercase text-danger font-bold mb-1">Motivo de Cancelación</p>
+                <p className="text-sm text-danger">{selectedInv.cancellation_reason || 'Sin motivo especificado'}</p>
               </div>
             )}
           </div>
@@ -445,10 +640,10 @@ const MovementForm: React.FC<{
 
 // ── Formulario cierre con cuadre ──────────────────────────────────────────────
 const CloseRegisterForm: React.FC<{
-  register: CashRegister; summary: Record<string, unknown> | null
+  register: CashRegister; summary: CashSummary | null
   onClosed: () => void; onCancel: () => void
 }> = ({ register, summary, onClosed, onCancel }) => {
-  const salesByMethod  = (summary?.salesByMethod as { payment_method: string; total: number }[]) ?? []
+  const salesByMethod  = summary?.salesByMethod ?? []
   const getSale        = (m: string) => salesByMethod.find(r => r.payment_method === m)?.total ?? 0
   const systemCash     = register.initial_cash + getSale('cash')
   const systemCard     = getSale('card')
@@ -562,6 +757,7 @@ const CashHistoryView: React.FC = () => {
   const [page, setPage]         = useState(1)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
+  const [selectedReg, setSelectedReg] = useState<(CashRegister & { total_sales: number }) | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -590,7 +786,7 @@ const CashHistoryView: React.FC = () => {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                {['Apertura', 'Cierre', 'Abierta por', 'Saldo inicial', 'Total ventas', 'Estado', 'Cuadre'].map(h => (
+                {['Apertura', 'Cierre', 'Abierta por', 'Saldo inicial', 'Total ventas', 'Estado', 'Cuadre', 'Acción'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-medium"
                       style={{ color: 'var(--color-text-muted)' }}>{h}</th>
                 ))}
@@ -602,7 +798,7 @@ const CashHistoryView: React.FC = () => {
                   (Math.abs(reg.diff_cash ?? 0) > 0.01 || Math.abs(reg.diff_card ?? 0) > 0.01 || Math.abs(reg.diff_transfer ?? 0) > 0.01)
                 return (
                   <tr key={reg.id} className="hover:bg-white/5"
-                      style={{ borderBottom: i < result.items.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                      style={{ borderBottom: i < (result.items.length - 1) ? '1px solid var(--color-border)' : 'none' }}>
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--color-text)' }}>
                       {new Date(reg.opened_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
                     </td>
@@ -612,7 +808,7 @@ const CashHistoryView: React.FC = () => {
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>{reg.opened_by_username}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--color-text)' }}>{fmt(reg.initial_cash)}</td>
                     <td className="px-4 py-3 font-medium" style={{ color: 'var(--color-accent)' }}>
-                      {fmt((reg as CashRegister & { total_sales: number }).total_sales)}
+                      {fmt(reg.total_sales)}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={reg.status === 'open' ? 'success' : 'muted'}>
@@ -626,6 +822,12 @@ const CashHistoryView: React.FC = () => {
                           : <Badge variant="success"><CheckCircle2 size={10} /> Cuadrada</Badge>
                         : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
                     </td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => setSelectedReg(reg)}
+                        className="luma-btn-ghost p-1.5 rounded-lg" title="Ver auditoría de cierre">
+                        <FileText size={14} />
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
@@ -634,6 +836,78 @@ const CashHistoryView: React.FC = () => {
           {result && <Paginator page={page} pageSize={15} total={result.total} onChange={setPage} />}
         </div>
       )}
+
+      {/* Modal de Auditoría de Cierre */}
+      <Modal isOpen={!!selectedReg} onClose={() => setSelectedReg(null)} 
+        title={`Auditoría de Caja #${selectedReg?.id}`} width="md">
+        {selectedReg && (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="luma-surface p-3 bg-white/5">
+                <p className="text-[10px] uppercase text-muted font-bold mb-1">Apertura</p>
+                <p className="text-xs font-medium">{new Date(selectedReg.opened_at).toLocaleString()}</p>
+                <p className="text-[10px] text-muted">por {selectedReg.opened_by_username}</p>
+              </div>
+              <div className="luma-surface p-3 bg-white/5">
+                <p className="text-[10px] uppercase text-muted font-bold mb-1">Cierre</p>
+                <p className="text-xs font-medium">{selectedReg.closed_at ? new Date(selectedReg.closed_at).toLocaleString() : 'Caja abierta'}</p>
+                <p className="text-[10px] text-muted">{selectedReg.closed_by_username ? `por ${selectedReg.closed_by_username}` : '—'}</p>
+              </div>
+            </div>
+
+            {selectedReg.status === 'closed' && (
+              <div className="rounded-xl overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-white/5 border-b">
+                      {['Método', 'Sistema', 'Declarado', 'Diferencia'].map(h => (
+                        <th key={h} className="text-left px-3 py-2 font-medium text-muted">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { label: '💵 Efectivo', system: selectedReg.system_cash,     decl: selectedReg.final_cash_declared,     diff: selectedReg.diff_cash },
+                      { label: '💳 Tarjeta',  system: selectedReg.system_card,     decl: selectedReg.final_card_declared,     diff: selectedReg.diff_card },
+                      { label: '🔄 Transf.',  system: selectedReg.system_transfer, decl: selectedReg.final_transfer_declared, diff: selectedReg.diff_transfer },
+                    ].map(row => (
+                      <tr key={row.label} className="border-b last:border-0">
+                        <td className="px-3 py-2 text-muted">{row.label}</td>
+                        <td className="px-3 py-2 font-medium">{fmt(row.system ?? 0)}</td>
+                        <td className="px-3 py-2 font-medium">{fmt(row.decl ?? 0)}</td>
+                        <td className="px-3 py-2 font-bold" style={{ 
+                          color: Math.abs(row.diff ?? 0) < 0.01 ? 'var(--color-success)' : (row.diff ?? 0) > 0 ? 'var(--color-info)' : 'var(--color-danger)' 
+                        }}>
+                          {(row.diff ?? 0) >= 0 ? '+' : ''}{fmt(row.diff ?? 0)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4 mt-2">
+              <div className="luma-surface p-3 bg-white/5">
+                <p className="text-[10px] uppercase text-muted font-bold mb-1">Notas de Apertura</p>
+                <p className="text-xs italic">{selectedReg.notes || 'Sin notas'}</p>
+              </div>
+              <div className="luma-surface p-3 bg-white/5">
+                <p className="text-[10px] uppercase text-muted font-bold mb-1">Notas de Cierre</p>
+                <p className="text-xs italic">{selectedReg.notes || 'Sin notas'}</p>
+              </div>
+            </div>
+
+            {/* Listado rápido de facturas del turno para auditoría completa */}
+            <div className="luma-surface overflow-hidden border mt-2">
+              <div className="bg-white/5 px-3 py-2 border-b text-[10px] font-bold uppercase tracking-wider text-muted">
+                Ventas del turno (Resumen)
+              </div>
+              <InvoiceListTable registerId={selectedReg.id} />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

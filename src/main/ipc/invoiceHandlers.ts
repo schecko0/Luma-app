@@ -215,14 +215,15 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
       const rows = db.prepare(`
         SELECT i.*,
           (c.first_name || ' ' || c.last_name) AS client_name,
-          u.username AS created_by_username
+          u.username AS created_by_username,
+          (SELECT GROUP_CONCAT(payment_method, ', ') FROM invoice_payments WHERE invoice_id = i.id) AS payment_methods_list
         FROM invoices i
         LEFT JOIN clients c ON c.id = i.client_id
         LEFT JOIN users u   ON u.id = i.created_by
         ${where}
         ORDER BY i.created_at DESC
         LIMIT ? OFFSET ?
-      `).all(...args, pageSize, offset) as Invoice[]
+      `).all(...args, pageSize, offset) as (Invoice & { payment_methods_list: string })[]
 
       const { total } = db.prepare(
         `SELECT COUNT(*) as total FROM invoices i LEFT JOIN clients c ON c.id = i.client_id ${where}`
