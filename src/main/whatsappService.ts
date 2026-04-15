@@ -453,12 +453,52 @@ export function startWhatsAppScheduler() {
   // Cron: cada día a la hora configurada (ej: "0 9 * * *" = 9:00 am)
   const cronExpr = `0 ${sendHour} * * *`
 
-  if (cronJob) cronJob.stop()
+  if (cronJob) {
+    logger.info('[WA Scheduler] Deteniendo tarea programada anterior...')
+    cronJob.stop()
+    cronJob = null
+  }
+
   cronJob = cron.schedule(cronExpr, () => {
     runScheduledReminders()
   }, { timezone: 'America/Mexico_City' })
 
-  logger.info(`[WA Scheduler] Iniciado. Cron: "${cronExpr}" (hora: ${sendHour}:00)`)
+  logger.info(`[WA Scheduler] Nueva tarea programada configurada: "${cronExpr}" (Hora: ${sendHour}:00)`)
+}
+
+/**
+ * Limpia el estado de WhatsApp tanto en memoria como en la base de datos.
+ * Se usa cuando el usuario se desconecta manualmente o cuando la sesión expira.
+ */
+async function performFullWACleanup(reason?: string) {
+  if (waClient) {
+    try {
+      // Intentamos cerrar formalmente, pero no bloqueamos si falla
+      await waClient.logout().catch(() => {})
+      await waClient.destroy().catch(() => {})
+    } catch (e) {
+      logger.error('[WA] Error al destruir cliente durante limpieza', e)
+    }
+    waClient = null
+  }
+  
+  if (cronJob) { 
+    cronJob.stop()
+    cronJob = null 
+  }
+
+  waStatus = 'disconnected'
+  waPhone  = null
+
+  // Limpiar base de datos para que la UI refleje el estado real
+  const db = getDb(); const now = nowISO()
+  db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_enabled', 'false', ?)")
+    .run(now)
+  db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_phone', '', ?)")
+    .run(now)
+
+  logger.info(`[WA] Sesión cerrada y base de datos limpia. Razón: ${reason ?? 'No especificada'}`)
+  notifyRenderer('whatsapp:status', { status: 'disconnected', reason })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -505,10 +545,11 @@ export function initWhatsAppClient(): Promise<void> {
         waPhone     = info?.wid?.user ?? null
         const phone = waPhone ? `+${waPhone}` : null
         // Guardar en settings para mostrarlo en UI
-        getDb().prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_phone', ?, ?)")
-          .run(phone ?? '', nowISO())
-        getDb().prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_enabled', 'true', ?)")
-          .run(nowISO())
+        const db = getDb(); const now = nowISO()
+        db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_phone', ?, ?)")
+          .run(phone ?? '', now)
+        db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_enabled', 'true', ?)")
+          .run(now)
         notifyRenderer('whatsapp:status', { status: 'ready', phone })
         logger.info(`[WA] Listo. Número: ${phone}`)
         startWhatsAppScheduler()
@@ -523,17 +564,14 @@ export function initWhatsAppClient(): Promise<void> {
     })
 
     waClient.on('auth_failure', (msg) => {
-      waStatus = 'error'
-      notifyRenderer('whatsapp:status', { status: 'error', error: msg })
       logger.error('[WA] Fallo de autenticación:', msg)
+      performFullWACleanup(`Error de autenticación: ${msg}`)
       reject(new Error(msg))
     })
 
     waClient.on('disconnected', (reason) => {
-      waStatus = 'disconnected'
-      waPhone  = null
-      notifyRenderer('whatsapp:status', { status: 'disconnected', reason })
-      logger.warn('[WA] Desconectado:', reason)
+      logger.warn('[WA] Desconectado por el servidor/usuario:', reason)
+      performFullWACleanup(`Sesión cerrada: ${reason}`)
     })
 
     waClient.initialize().catch(err => {
@@ -608,17 +646,5 @@ export async function sendConfirmationMessage(
 }
 
 export async function disconnectWhatsApp() {
-  if (waClient) {
-    await waClient.logout().catch(() => {})
-    await waClient.destroy().catch(() => {})
-    waClient = null
-  }
-  if (cronJob) { cronJob.stop(); cronJob = null }
-  waStatus = 'disconnected'
-  waPhone  = null
-  getDb().prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_enabled', 'false', ?)")
-    .run(nowISO())
-  getDb().prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_phone', '', ?)")
-    .run(nowISO())
-  notifyRenderer('whatsapp:status', { status: 'disconnected' })
+  await performFullWACleanup('Desconexión manual solicitada')
 }

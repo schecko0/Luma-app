@@ -260,6 +260,8 @@ function colorNameToGoogleId(name: string | null | undefined): string | undefine
   return name ? m[name] : undefined
 }
 
+// ... (mantener funciones anteriores)
+
 function isInvalidGrantError(err: any): boolean {
   const msg = err.message || ''
   const data = err.response?.data?.error || ''
@@ -269,6 +271,25 @@ function isInvalidGrantError(err: any): boolean {
     data === 'invalid_grant' ||
     (typeof data === 'string' && data.includes('invalid_grant'))
   )
+}
+
+/**
+ * Maneja errores de autenticación de Google de forma centralizada.
+ * Si es un error fatal (token expirado/revocado), limpia la DB y avisa al Renderer.
+ */
+function handleAuthError(err: any): boolean {
+  if (isInvalidGrantError(err)) {
+    logger.error('Sesión de Google Calendar caducada o revocada. Desconectando...', err)
+    getDb().prepare('DELETE FROM google_oauth_tokens WHERE id=1').run()
+    
+    // Notificar a todas las ventanas para que actualicen su UI y muestren alerta
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('calendar:auth-error', 'La sesión de Google ha caducado. Por favor, vuelve a conectar tu cuenta.')
+      win.webContents.send('calendar:updated') // Forzar refresco de estados
+    })
+    return true
+  }
+  return false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,9 +362,7 @@ async function processSyncQueue(): Promise<void> {
       })
     } catch (err: any) {
       // Si el token es inválido o caducó (invalid_grant), desconectar para forzar re-login
-      if (isInvalidGrantError(err)) {
-        logger.error('Sesión de Google Calendar caducada o revocada. Desconectando...', err)
-        db.prepare('DELETE FROM google_oauth_tokens WHERE id=1').run()
+      if (handleAuthError(err)) {
         isProcessingQueue = false
         return // Detener procesamiento, requiere intervención del usuario
       }
@@ -482,8 +501,8 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
                 BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
               }
             }).catch(err => {
-              //revisar error_description para detectar casos como "Invalid Grant" y forzar desconexión si es necesario
-              
+              // Si falla el pull por autenticación, desconectamos
+              if (handleAuthError(err)) return
               logger.error('[Pull] Error en Lazy Pull', err)
             })
           }
@@ -679,8 +698,7 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
           errors++ 
           logger.error(`Fallo al sincronizar cita #${row.id} manualmente`, e)
           
-          if (isInvalidGrantError(e)) {
-            db.prepare('DELETE FROM google_oauth_tokens WHERE id=1').run()
+          if (handleAuthError(e)) {
             return { ok: false, error: 'La sesión de Google ha caducado. Por favor, vuelve a conectar la cuenta.' }
           }
         } 

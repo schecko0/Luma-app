@@ -148,10 +148,15 @@ export const AgendaPage: React.FC = () => {
   useEffect(() => { loadAll() }, [rangeFrom, rangeTo])
 
   useEffect(() => {
-    const unsub = window.electronAPI.calendar.onCalendarUpdated(() => {
+    const unsubUpdate = window.electronAPI.calendar.onCalendarUpdated(() => {
       if (!loading) loadAll()
     })
-    return () => unsub()
+    const unsubAuth = window.electronAPI.calendar.onCalendarAuthError((msg) => {
+      showToast(msg, 'error')
+      // Actualizar estado local para reflejar desconexión inmediata
+      setGcStatus(prev => ({ ...prev, connected: false, connected_at: null }))
+    })
+    return () => { unsubUpdate(); unsubAuth() }
   }, [loadAll, loading])
 
   // Motor de alertas sonoras

@@ -133,6 +133,11 @@ const api = {
       ipcRenderer.on('calendar:updated', wrapped)
       return () => ipcRenderer.removeListener('calendar:updated', wrapped)
     },
+    onCalendarAuthError: (cb: (message: string) => void) => {
+      const wrapped = (_: any, msg: string) => cb(msg)
+      ipcRenderer.on('calendar:auth-error', wrapped)
+      return () => ipcRenderer.removeListener('calendar:auth-error', wrapped)
+    },
   },
 
   whatsapp: {
