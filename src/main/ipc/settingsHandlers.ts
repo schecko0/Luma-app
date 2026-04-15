@@ -1,4 +1,7 @@
 import type { IpcMain } from 'electron'
+import { dialog, app } from 'electron'
+import path from 'path'
+import fs from 'fs'
 import { getDb } from '../../database/database'
 import { nowISO } from '../../database/dbUtils'
 
@@ -28,6 +31,36 @@ export function registerSettingsHandlers(ipcMain: IpcMain) {
       })
       run()
       return { ok: true }
+    } catch (err: unknown) { return { ok: false, error: String(err) } }
+  })
+
+  // ── Cargar Logo del Salón ──────────────────────────────────────────────
+  ipcMain.handle('settings:uploadLogo', async () => {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: 'Seleccionar Logo del Salón',
+        filters: [{ name: 'Imágenes', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+        properties: ['openFile']
+      })
+
+      if (canceled || filePaths.length === 0) return { ok: false, error: 'Cancelado' }
+
+      const sourcePath = filePaths[0]
+      const ext        = path.extname(sourcePath)
+      const fileName   = `salon_logo_${Date.now()}${ext}`
+      const targetDir  = path.join(app.getPath('userData'), 'uploads')
+      
+      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true })
+      
+      const targetPath = path.join(targetDir, fileName)
+      fs.copyFileSync(sourcePath, targetPath)
+
+      // Guardar en DB la RUTA ABSOLUTA (sin protocolos para leerla luego como base64)
+      const db = getDb()
+      db.prepare('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)')
+        .run('salon_logo', targetPath, nowISO())
+
+      return { ok: true, data: targetPath }
     } catch (err: unknown) { return { ok: false, error: String(err) } }
   })
 }

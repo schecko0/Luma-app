@@ -409,7 +409,7 @@ const WhatsAppBanner: React.FC<{ status: WaStatus }> = ({ status }) => {
   if (status.status !== 'ready') return null
 
   return (
-    <div className="mx-6 mt-2 rounded-xl px-4 py-2 flex items-center gap-3 border"
+    <div className="mx-6 mt-2 mb-4 rounded-xl px-4 py-2 flex items-center gap-3 border"
          style={{
            background:   'color-mix(in srgb,#1D9E75 8%,transparent)',
            borderColor:  'color-mix(in srgb,#1D9E75 25%,transparent)',

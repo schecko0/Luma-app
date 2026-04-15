@@ -482,6 +482,8 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
                 BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
               }
             }).catch(err => {
+              //revisar error_description para detectar casos como "Invalid Grant" y forzar desconexión si es necesario
+              
               logger.error('[Pull] Error en Lazy Pull', err)
             })
           }

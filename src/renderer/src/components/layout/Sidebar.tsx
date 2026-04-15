@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Scissors, Package, UserRound,
   CalendarDays, ShoppingCart, Vault, BadgeDollarSign,
-  Settings, ChevronLeft, Sparkles,
+  Settings, ChevronLeft, Sparkles, BookOpen,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -25,6 +25,7 @@ const navItems: NavItem[] = [
   { to: '/cash',        icon: <Vault size={18} />,             label: 'Caja',         adminOnly: true },
   { to: '/commissions', icon: <BadgeDollarSign size={18} />,   label: 'Comisiones',   adminOnly: true },
   { to: '/settings',    icon: <Settings size={18} />,          label: 'Ajustes' },
+  { to: '/help',        icon: <BookOpen size={18} />,          label: 'Ayuda' },
 ]
 
 interface SidebarProps {
@@ -32,9 +33,10 @@ interface SidebarProps {
   collapsed: boolean
   onToggle: () => void
   salonName: string
+  salonLogo?: string
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, salonName }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, salonName, salonLogo }) => {
   return (
     <aside
       className={clsx(
@@ -55,10 +57,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, 
         style={{ borderColor: 'var(--color-border)' }}
       >
         <div
-          className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: 'var(--color-accent)' }}
+          className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden"
+          style={{ background: salonLogo ? 'transparent' : 'var(--color-accent)' }}
         >
-          <Sparkles size={16} className="text-white" />
+          {salonLogo ? (
+            <img src={salonLogo} alt="Logo" className="w-full h-full object-cover" />
+          ) : (
+            <Sparkles size={16} className="text-white" />
+          )}
         </div>
         {!collapsed && (
           <div className="overflow-hidden">

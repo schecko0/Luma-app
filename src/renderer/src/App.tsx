@@ -11,11 +11,11 @@ import { CashPage }         from './pages/CashPage'
 import { PosPage }          from './pages/PosPage'
 import { CommissionsPage }  from './pages/CommissionsPage'
 import { AgendaPage }       from './pages/AgendaPage'
-import { SettingsPage }     from './pages/index'
+import { SettingsPage, HelpPage } from './pages/index'
 import { useAppState }      from './hooks/useAppState'
 
 export default function App() {
-  const { isAdmin, sidebarCollapsed, setSidebarCollapsed, salonName } = useAppState()
+  const { isAdmin, sidebarCollapsed, setSidebarCollapsed, salonName, salonLogo, refreshSettings } = useAppState()
 
   return (
     <BrowserRouter>
@@ -23,7 +23,8 @@ export default function App() {
         <Titlebar />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar isAdmin={isAdmin} collapsed={sidebarCollapsed}
-            onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} salonName={salonName} />
+            onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} 
+            salonName={salonName} salonLogo={salonLogo} />
           <main className="flex-1 overflow-hidden flex flex-col" style={{ background: 'var(--color-bg)' }}>
             <Routes>
               <Route path="/"            element={<Navigate to="/dashboard" replace />} />
@@ -36,7 +37,8 @@ export default function App() {
               <Route path="/inventory"   element={<InventoryPage />} />
               <Route path="/cash"        element={<CashPage />} />
               <Route path="/commissions" element={<CommissionsPage />} />
-              <Route path="/settings"    element={<SettingsPage />} />
+              <Route path="/settings"    element={<SettingsPage onSaved={refreshSettings} />} />
+              <Route path="/help"        element={<HelpPage />} />
               <Route path="*"            element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </main>

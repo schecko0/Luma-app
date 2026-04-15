@@ -99,8 +99,9 @@ const api = {
 
   // ── AJUSTES ───────────────────────────────────────────────────────────
   settings: {
-    getAll: () => ipcRenderer.invoke('settings:getAll'),
-    set:    (updates: Record<string, string>) => ipcRenderer.invoke('settings:set', updates),
+    getAll:     () => ipcRenderer.invoke('settings:getAll'),
+    set:        (updates: Record<string, string>) => ipcRenderer.invoke('settings:set', updates),
+    uploadLogo: () => ipcRenderer.invoke('settings:uploadLogo'),
   },
 
   // ── DASHBOARD ─────────────────────────────────────────────────────────

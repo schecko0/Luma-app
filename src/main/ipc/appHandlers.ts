@@ -215,13 +215,28 @@ export function registerAppHandlers(ipcMain: IpcMain) {
 
   ipcMain.handle('app:selectImageFile', async () => {
     try {
+      const { dialog, app } = await import('electron')
+      const path = await import('path')
+      const fs   = await import('fs')
+
       const result = await dialog.showOpenDialog({
-        title: 'Seleccionar logo del salón',
+        title: 'Seleccionar imagen',
         filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
         properties: ['openFile'],
       })
       if (result.canceled || result.filePaths.length === 0) return { ok: false }
-      return { ok: true, path: result.filePaths[0] }
+
+      const sourcePath = result.filePaths[0]
+      const ext        = path.extname(sourcePath)
+      const fileName   = `img_${Date.now()}${ext}`
+      const targetDir  = path.join(app.getPath('userData'), 'uploads')
+      
+      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true })
+      
+      const targetPath = path.join(targetDir, fileName)
+      fs.copyFileSync(sourcePath, targetPath)
+
+      return { ok: true, path: targetPath }
     } catch (err: any) {
       return { ok: false, error: String(err) }
     }

@@ -3,25 +3,40 @@ import { useState, useEffect } from 'react'
 interface AppState {
   isAdmin: boolean
   salonName: string
+  salonLogo: string
   sidebarCollapsed: boolean
   setSidebarCollapsed: (v: boolean) => void
+  refreshSettings: () => Promise<void>
 }
 
 export function useAppState(): AppState {
   const [salonName, setSalonName]               = useState('Luma')
+  const [salonLogo, setSalonLogo]               = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const isAdmin = true // TODO: auth real
 
-  useEffect(() => {
-    window.electronAPI.settings.getAll().then(res => {
-      if (!res.ok) return
+  const refreshSettings = async () => {
+    const res = await window.electronAPI.settings.getAll()
+    if (res.ok) {
       const s = res.data as Record<string, string>
       if (s.salon_name) setSalonName(s.salon_name)
+      
+      // CARGAR LOGO COMO BASE64 (Estrategia similar a WhatsApp)
+      if (s.salon_logo) {
+        const logoRes = await (window.electronAPI as any).readImageAsBase64?.(s.salon_logo)
+        if (logoRes?.ok) setSalonLogo(logoRes.data)
+        else setSalonLogo('')
+      } else {
+        setSalonLogo('')
+      }
+      
       applyTheme(s.theme ?? 'dark', s)
-    })
-  }, [])
+    }
+  }
 
-  return { isAdmin, salonName, sidebarCollapsed, setSidebarCollapsed }
+  useEffect(() => { refreshSettings() }, [])
+
+  return { isAdmin, salonName, salonLogo, sidebarCollapsed, setSidebarCollapsed, refreshSettings }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

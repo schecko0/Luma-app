@@ -16,6 +16,7 @@ import { ErrorLog, WhatsAppReminderLog } from '../types'
 interface SettingsForm {
   salon_name: string
   salon_currency: string
+  salon_logo: string
   tax_label: string
   tax_rate: string
   theme: string
@@ -31,7 +32,7 @@ interface SettingsForm {
 }
 
 const DEFAULTS: SettingsForm = {
-  salon_name: '', salon_currency: 'MXN',
+  salon_name: '', salon_currency: 'MXN', salon_logo: '',
   tax_label: 'IVA', tax_rate: '16', theme: 'dark',
   custom_bg: '#0f0d0b', custom_surface: '#1a1714', custom_surface2: '#242019',
   custom_border: '#2e2920', custom_accent: '#d4881f', custom_text: '#f5f0e8',
@@ -44,9 +45,10 @@ const CURRENCIES = ['MXN', 'USD', 'EUR', 'COP', 'ARS', 'CLP', 'PEN']
 
 type TabId = 'general' | 'appearance' | 'google' | 'whatsapp' | 'system'
 
-export const SettingsPage: React.FC = () => {
+export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
   const [activeTab, setActiveTab] = useState<TabId>('general')
   const [form, setForm]           = useState<SettingsForm>(DEFAULTS)
+  const [logoPath, setLogoPath]   = useState('')
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [saved, setSaved]         = useState(false)
@@ -85,13 +87,22 @@ export const SettingsPage: React.FC = () => {
 
 
   useEffect(() => {
-    window.electronAPI.settings.getAll().then((res: { ok: boolean; data?: Record<string, string>; error?: string }) => {
+    window.electronAPI.settings.getAll().then(async (res: { ok: boolean; data?: Record<string, string>; error?: string }) => {
       if (res.ok) {
         const d = res.data as Record<string, string>
+        
+        let logoBase64 = ''
+        if (d.salon_logo) {
+          setLogoPath(d.salon_logo)
+          const lRes = await (window.electronAPI as any).readImageAsBase64?.(d.salon_logo)
+          if (lRes?.ok) logoBase64 = lRes.data
+        }
+
         setForm(prev => ({
           ...prev,
           salon_name:       d.salon_name       ?? prev.salon_name,
           salon_currency:   d.salon_currency   ?? prev.salon_currency,
+          salon_logo:       logoBase64,
           tax_label:        d.tax_label        ?? prev.tax_label,
           tax_rate:         d.tax_rate         ?? prev.tax_rate,
           theme:            d.theme            ?? prev.theme,
@@ -280,6 +291,7 @@ export const SettingsPage: React.FC = () => {
       const res = await window.electronAPI.settings.set({
         salon_name:        form.salon_name.trim()  || 'Mi Salón',
         salon_currency:    form.salon_currency,
+        salon_logo:        logoPath,
         tax_label:         form.tax_label.trim()   || 'IVA',
         tax_rate:          String(parseFloat(form.tax_rate) || 0),
         theme:             form.theme,
@@ -299,9 +311,23 @@ export const SettingsPage: React.FC = () => {
       })
       if (!res.ok) { setError(res.error ?? 'Error al guardar'); return }
       setSaved(true)
+      onSaved?.()
       setTimeout(() => setSaved(false), 3000)
     } catch (e) { setError(String(e)) }
     finally { setSaving(false) }
+  }
+
+  const handleUploadLogo = async () => {
+    const res = await (window.electronAPI as any).settings.uploadLogo()
+    if (res.ok) {
+      setLogoPath(res.data)
+      const previewRes = await (window.electronAPI as any).readImageAsBase64?.(res.data)
+      if (previewRes?.ok) {
+        set('salon_logo' as any, previewRes.data)
+      }
+    } else if (res.error !== 'Cancelado') {
+      setError(res.error || 'Error al cargar logo')
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center h-full"><Spinner size={36} /></div>
@@ -371,18 +397,43 @@ export const SettingsPage: React.FC = () => {
           {activeTab === 'general' && (
             <>
               <Section title="Información del salón" icon={<Store size={16} />}>
-                <div>
-                  <label className="luma-label">Nombre del salón</label>
-                  <input type="text" placeholder="Mi Salón" value={form.salon_name}
-                    onChange={e => set('salon_name', e.target.value)}
-                    className="luma-input" data-selectable />
-                </div>
-                <div>
-                  <label className="luma-label">Moneda</label>
-                  <select value={form.salon_currency}
-                    onChange={e => set('salon_currency', e.target.value)} className="luma-input w-40">
-                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                <div className="flex items-start gap-6">
+                  {/* Preview Logo */}
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="w-24 h-24 rounded-2xl border-2 border-dashed flex items-center justify-center overflow-hidden bg-white/5"
+                         style={{ borderColor: 'var(--color-border)' }}>
+                      {form.salon_logo ? (
+                        <img src={form.salon_logo} alt="Logo" className="w-full h-full object-cover" />
+                      ) : (
+                        <Store size={32} className="opacity-20" />
+                      )}
+                    </div>
+                    <button onClick={handleUploadLogo} className="luma-btn-ghost text-[10px] uppercase font-bold py-1 px-3 border border-white/10 rounded-lg">
+                      {form.salon_logo ? 'Cambiar Logo' : 'Cargar Logo'}
+                    </button>
+                    {form.salon_logo && (
+                      <button onClick={() => { set('salon_logo' as any, ''); setLogoPath('') }} className="text-[9px] text-danger hover:underline">
+                        Quitar
+                      </button>
+                    )}
+
+                  </div>
+
+                  <div className="flex-1 flex flex-col gap-4">
+                    <div>
+                      <label className="luma-label">Nombre del salón</label>
+                      <input type="text" placeholder="Mi Salón" value={form.salon_name}
+                        onChange={e => set('salon_name', e.target.value)}
+                        className="luma-input" data-selectable />
+                    </div>
+                    <div>
+                      <label className="luma-label">Moneda</label>
+                      <select value={form.salon_currency}
+                        onChange={e => set('salon_currency', e.target.value)} className="luma-input w-40">
+                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </Section>
 
