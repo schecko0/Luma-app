@@ -91,8 +91,8 @@ const api = {
 
   // ── COMISIONES ────────────────────────────────────────────────────────
   commissions: {
-    preview:      (dateFrom: string, dateTo: string) => ipcRenderer.invoke('commissions:preview', dateFrom, dateTo),
-    confirm:      (dateFrom: string, dateTo: string, notes?: string) => ipcRenderer.invoke('commissions:confirm', dateFrom, dateTo, notes),
+    preview:      (dateFrom: string, dateTo: string, includeSalaries?: boolean) => ipcRenderer.invoke('commissions:preview', dateFrom, dateTo, includeSalaries),
+    confirm:      (dateFrom: string, dateTo: string, notes?: string, includeSalaries?: boolean) => ipcRenderer.invoke('commissions:confirm', dateFrom, dateTo, notes, includeSalaries),
     listRuns:     (p: PaginationParams) => ipcRenderer.invoke('commissions:listRuns', p),
     getRunDetail: (runId: number) => ipcRenderer.invoke('commissions:getRunDetail', runId),
   },

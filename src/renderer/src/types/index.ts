@@ -198,19 +198,26 @@ export interface CommissionPreviewEmployee {
   base_salary: number; commission_pct: number
   is_owner: boolean
   total_services_amount: number; commission_amount: number
+  salary_amount: number;      // ← Nuevo: sueldo base (si se incluyó)
+  total_to_pay: number;       // ← Nuevo: comision + sueldo
   details: CommissionPreviewDetail[]
 }
 
 export interface CommissionPreviewDetail {
   invoice_folio: string; invoice_date: string; service_name: string
-  line_total: number; commission_pct: number
-  commission_amount: number; is_owner: boolean
+  line_total: number; work_split_pct: number; commission_pct: number
+  commission_amount: number; is_owner: boolean // ← Añadido is_owner
 }
 
 export interface CommissionPreview {
   date_from: string; date_to: string
   employees: CommissionPreviewEmployee[]
   total_invoiced: number; total_commissions: number; total_business: number
+  total_salaries: number      // ← Nuevo: suma de sueldos pagados
+  total_to_pay: number        // ← Nuevo: comisiones + sueldos
+  include_salaries: boolean   // ← Nuevo: si se incluyeron sueldos
+  /** Líneas del mismo rango que ya fueron incluidas en un cuadre anterior */
+  already_commissioned: number
 }
 
 // ── Agenda / Citas ────────────────────────────────────────────────────────────

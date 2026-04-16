@@ -376,54 +376,55 @@ const CommissionsGuide = () => (
   <GuideWrapper
     icon={<BadgeDollarSign className="text-accent" />}
     title="Comisiones"
-    subtitle="Calcula y registra el pago al personal de forma automática y auditable."
+    subtitle="Calcula y registra la distribución de ingresos al personal de forma automática."
   >
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
-      El módulo de Comisiones tiene dos pestañas: <strong style={{ color: 'var(--color-text)' }}>Nuevo cuadre</strong> para calcular y confirmar pagos,
-      e <strong style={{ color: 'var(--color-text)' }}>Historial</strong> para consultar cuadres anteriores.
+      El módulo de Comisiones permite realizar el cuadre periódico para pagar a los colaboradores y jefes.
+      Está dividido en <strong style={{ color: 'var(--color-text)' }}>Nuevo cuadre</strong> (cálculo actual)
+      e <strong style={{ color: 'var(--color-text)' }}>Historial</strong> (auditoría de pagos pasados).
     </p>
 
-    <SectionTitle>¿Cómo se calculan las comisiones?</SectionTitle>
+    <SectionTitle>Lógica de Asociación y Reparto</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
-      Cada empleado tiene asignado un porcentaje de comisión (configurable en el módulo de Personal).
-      Al registrar una venta en el POS, el sistema guarda qué especialista realizó cada servicio y qué
-      porcentaje del trabajo fue suyo. Las comisiones se calculan así:
+      Luma utiliza un modelo de asociación donde el precio total del servicio se reparte íntegramente
+      entre quienes participaron en él:
     </p>
     <div className="flex flex-col gap-2 p-4 rounded-xl border mt-2"
          style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
       <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-        <strong style={{ color: 'var(--color-text)' }}>Empleado auxiliar:</strong> recibe <code>precio del servicio × % de comisión</code>
+        <strong style={{ color: 'var(--color-text)' }}>Colaborador Auxiliar:</strong> recibe su <code>% de comisión</code> directo sobre el precio del servicio.
       </p>
       <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-        <strong style={{ color: 'var(--color-text)' }}>Jefe del servicio (Owner):</strong> recibe <code>precio del servicio − suma de comisiones de auxiliares</code>
+        <strong style={{ color: 'var(--color-text)' }}>Jefe del servicio (Owner):</strong> recibe el <code>remanente total</code> (Precio − comisiones de auxiliares).
       </p>
-      <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-        El "jefe" de un servicio se asigna en el catálogo de Servicios, no en cada venta.
-        Es el propietario o responsable principal de ese tipo de servicio.
+      <p className="text-xs mt-1 italic" style={{ color: 'var(--color-text-muted)' }}>
+        El "jefe" es el responsable del servicio y quien absorbe los costos de insumos y renta del salón.
       </p>
     </div>
 
     <SectionTitle>Generar un nuevo cuadre</SectionTitle>
 
-    <HelpStep number={1} title="Seleccionar el rango de fechas"
-      body="En la pestaña 'Nuevo cuadre', elige la fecha de inicio y fin del período a liquidar. Por defecto aparece el mes en curso. Luego haz clic en 'Calcular pre-cuadre'." />
+    <HelpStep number={1} title="Seleccionar periodo y opciones"
+      body="Elige el rango de fechas. Si deseas que en este corte se pague también el sueldo base mensual de los empleados, activa el botón '¿Incluir sueldos base?'. Si ya lo pagaste en un corte anterior, déjalo desactivado para calcular solo comisiones." />
 
     <HelpStep number={2} title="Revisar el pre-cuadre"
-      body="El sistema muestra tres tarjetas: total facturado en el período, total que corresponde al personal, e ingreso neto del salón. Debajo aparece una tabla por empleado que puedes expandir (clic en la fila) para ver el desglose servicio por servicio, con folio y fecha de cada venta." />
+      body="Verás el total facturado y el 'Total a repartir' (que incluye comisiones + sueldos si se activaron). La tabla por empleado es colapsable; haz clic para ver el detalle de cada ticket, fecha y si el empleado actuó como Jefe o Auxiliar." />
 
-    <HelpStep number={3} title="Confirmar y guardar"
-      body="Si los números son correctos, haz clic en 'Confirmar cuadre'. Puedes agregar notas opcionales (por ejemplo, 'Quincena del 1 al 15'). Al confirmar, el cuadre queda guardado en el historial de auditoría." />
+    <HelpStep number={3} title="Confirmar y auditar"
+      body="Al confirmar, se genera un registro histórico. El sistema marcará esos servicios como pagados para que no vuelvan a aparecer en futuros cuadres." />
 
-    <SectionTitle>Historial de cuadres</SectionTitle>
+    <SectionTitle>Historial y Auditoría Inteligente</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
-      En la pestaña Historial verás todos los cuadres confirmados, con su período, montos y quién los ejecutó.
-      Haz clic en el ícono de ojo (👁) para ver el desglose completo de cada cuadre pasado.
+      En la pestaña Historial puedes buscar pagos específicos usando los filtros:
     </p>
+    <ul className="list-disc ml-5 mt-2 text-xs flex flex-col gap-1" style={{ color: 'var(--color-text-muted)' }}>
+      <li><strong style={{ color: 'var(--color-text)' }}>Por empleado:</strong> Selecciona un colaborador para ver solo los cuadres donde recibió dinero. Al abrir el detalle, el sistema filtrará y expandirá automáticamente la información de ese empleado.</li>
+      <li><strong style={{ color: 'var(--color-text)' }}>Por fecha:</strong> Filtra para auditar periodos específicos (meses o años pasados).</li>
+      <li><strong style={{ color: 'var(--color-text)' }}>Detalle colapsable:</strong> Los reportes históricos ahora se agrupan por empleado, permitiendo ver de un vistazo cuánto fue comisión y cuánto sueldo base.</li>
+    </ul>
 
-    <CalloutBox icon={<Info size={16} />} variant="info" title="El cuadre no modifica las ventas">
-      Confirmar un cuadre es solo un registro contable. No altera ni bloquea las ventas existentes.
-      Si se registran ventas adicionales en el mismo período después del cuadre, deberás generar
-      un nuevo cuadre para incluirlas.
+    <CalloutBox icon={<Zap size={16} />} variant="tip" title="Cuadres parciales">
+      Puedes hacer cuadres en cualquier momento. Si haces un cuadre a mediodía y luego hay más ventas, al hacer un nuevo cuadre por la tarde, el sistema solo incluirá las ventas nuevas que quedaron pendientes.
     </CalloutBox>
   </GuideWrapper>
 )

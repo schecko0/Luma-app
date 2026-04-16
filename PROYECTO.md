@@ -328,36 +328,8 @@ const doSave = async () => {
 
 ---
 
-## 10. BUGS CONOCIDOS / PENDIENTES
 
-### Pendiente: Pull paginado de Google Calendar
-La API de Google Calendar retorna máximo `250` eventos por llamada. El pull actual trae los últimos 7 días + próximos 60 días con `maxResults: 250`. Si el salón tiene más de 250 eventos en ese rango, los más recientes se truncarán.
-
-**Fix pendiente** en `calendarHandlers.ts → pullFromGoogle()`:
-```typescript
-// Implementar paginación con nextPageToken
-let pageToken: string | undefined
-do {
-  const resp = await cal.events.list({ ..., pageToken, maxResults: 250 })
-  // procesar resp.data.items
-  pageToken = resp.data.nextPageToken ?? undefined
-} while (pageToken)
-```
-
-### Pendiente: Citas más allá del rango de pull
-Al navegar a semanas/meses fuera del rango inicial (ej: citas con 1 año de anticipación), esas citas no se mostrarán si no se importaron. La solución está disponible: botón **"Importar"** en el banner de conexión ejecuta `calendar:pull` manualmente.
-
-**Fix pendiente**: hacer pull dinámico al navegar a rangos no cargados (lazy loading por rango).
-
-### Pendiente: Usuario autenticado hardcodeado
-Todos los handlers usan `created_by: 1`. Sistema de autenticación de usuarios pendiente.
-
-### Pendiente: Historial de tarifas en UI
-El backend registra cambios en `employee_rate_history` correctamente. La UI de `EmployeesPage` no muestra este historial aún — candidato para mejora futura.
-
----
-
-## 11. INSTRUCCIONES DE ARRANQUE (REINSTALACIÓN)
+## 10. INSTRUCCIONES DE ARRANQUE (REINSTALACIÓN)
 
 ```bash
 # 1. Clonar/descomprimir el proyecto
@@ -384,7 +356,7 @@ Remove-Item "$env:APPDATA\luma-app\luma.db"
 
 ---
 
-## 12. CONFIGURACIÓN GOOGLE CLOUD (PARA ACTIVAR LA AGENDA)
+## 11. CONFIGURACIÓN GOOGLE CLOUD (PARA ACTIVAR LA AGENDA)
 
 1. Ir a https://console.cloud.google.com
 2. Crear proyecto → habilitar **Google Calendar API**
@@ -398,7 +370,7 @@ Remove-Item "$env:APPDATA\luma-app\luma.db"
 
 ---
 
-## 13. COLORES DE GOOGLE CALENDAR
+## 12. COLORES DE GOOGLE CALENDAR
 
 Los colores internos se mapean a los colorId de Google Calendar:
 
@@ -420,7 +392,7 @@ El color de una cita se hereda del `calendar_color` del empleado asignado.
 
 ---
 
-## 14. DASHBOARD — MÉTRICAS DISPONIBLES
+## 13. DASHBOARD — MÉTRICAS DISPONIBLES
 
 `window.electronAPI.dashboard.getStats(dateFrom?, dateTo?)` retorna:
 
@@ -442,7 +414,7 @@ El color de una cita se hereda del `calendar_color` del empleado asignado.
 
 ---
 
-## 15. CONVENCIONES DE CÓDIGO
+## 14. CONVENCIONES DE CÓDIGO
 
 - **Idioma**: todo en español (labels, mensajes de error, comentarios, nombres de BD)
 - **Tipos**: siempre tipado estricto, nunca `any` si se puede evitar

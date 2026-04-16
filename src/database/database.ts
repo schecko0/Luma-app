@@ -55,6 +55,7 @@ function runMigrations() {
   if (current < 4) applyMigration4()
   if (current < 5) applyMigration5()   // ← Google OAuth tokens del salón
   if (current < 6) applyMigration6()   // ← WhatsApp reminder log + settings
+  if (current < 7) applyMigration7()   // ← commission_run_id en invoice_service_employees
 }
 
 function getCurrentVersion(): number {
@@ -554,6 +555,26 @@ function applyMigration5() {
 // ─────────────────────────────────────────────────────────────────────────────
 // MIGRACIÓN 6 — WhatsApp: log de recordatorios + settings de plantillas
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 7 — Marcar líneas de comisión con el run que las procesó
+// ─────────────────────────────────────────────────────────────────────────────
+function applyMigration7() {
+  log('Aplicando migración 7: commission_run_id en invoice_service_employees...')
+  const migrate = db.transaction(() => {
+    // Agregar la FK al run de comisiones que procesó cada línea.
+    // NULL = aún no ha sido incluida en ningún cuadre confirmado.
+    db.exec(`
+      ALTER TABLE invoice_service_employees
+        ADD COLUMN commission_run_id INTEGER REFERENCES commission_runs(id);
+      CREATE INDEX IF NOT EXISTS idx_ise_commission_run
+        ON invoice_service_employees(commission_run_id);
+    `)
+  })
+  migrate()
+  setVersion(7)
+  log('Migración 7 completada.')
+}
+
 function applyMigration6() {
   log('Aplicando migración 6: WhatsApp reminder log + settings...')
   const migrate = db.transaction(() => {
