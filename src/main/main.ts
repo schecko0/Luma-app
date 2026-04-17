@@ -23,7 +23,6 @@ autoUpdater.on('error', (err) => {
   logger.error('[AutoUpdater] Error:', err)
 })
 
-autoUpdater.checkForUpdatesAndNotify()
 
 
 
@@ -51,12 +50,18 @@ async function createWindow() {
       sandbox: false,
     },
     show: false,
+    
   })
+  mainWindow.setMenuBarVisibility(false)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
     if (isDev) {
       mainWindow?.webContents.openDevTools({ mode: 'detach' })
+    }
+    // ✅ Aquí sí existe mainWindow para buscar actualizaciones, porque esperamos a 'ready-to-show'
+    if (!isDev) {
+      autoUpdater.checkForUpdatesAndNotify()
     }
   })
 
@@ -95,7 +100,7 @@ app.whenReady().then(async () => {
   ipcMain.on('install-update', () => {
     autoUpdater.quitAndInstall()
   })
-  
+
   startSyncWorker()
   try {
     const row = getDb().prepare("SELECT value FROM settings WHERE key='wa_enabled'").get() as { value: string } | undefined
