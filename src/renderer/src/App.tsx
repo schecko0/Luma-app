@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes,  Navigate, HashRouter, Route } from 'react-router-dom'
 import { Sidebar }          from './components/layout/Sidebar'
 import { Titlebar }         from './components/layout/Titlebar'
 import { DashboardPage }    from './pages/DashboardPage'
@@ -18,7 +18,7 @@ export default function App() {
   const { isAdmin, sidebarCollapsed, setSidebarCollapsed, salonName, salonLogo, refreshSettings } = useAppState()
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <div className="flex flex-col h-screen overflow-hidden">
         <Titlebar />
         <div className="flex flex-1 overflow-hidden">
@@ -44,6 +44,6 @@ export default function App() {
           </main>
         </div>
       </div>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
