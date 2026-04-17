@@ -11,16 +11,30 @@ import { initWhatsAppClient } from './whatsappService'
 autoUpdater.logger = logger
 autoUpdater.autoDownload = true
 
+autoUpdater.on('checking-for-update', () => {
+  logger.info('[AutoUpdater] Buscando actualizaciones...')
+})
+
 autoUpdater.on('update-available', (info) => {
+  logger.info('[AutoUpdater] ¡Update disponible!', JSON.stringify(info))
   mainWindow?.webContents.send('update-available', info)
 })
 
+autoUpdater.on('update-not-available', (info) => {
+  logger.info('[AutoUpdater] Sin actualizaciones. Versión actual:', JSON.stringify(info))
+})
+
+autoUpdater.on('download-progress', (progress) => {
+  logger.info(`[AutoUpdater] Descargando... ${Math.round(progress.percent)}% (${Math.round(progress.transferred / 1024 / 1024)}MB / ${Math.round(progress.total / 1024 / 1024)}MB)`)
+})
+
 autoUpdater.on('update-downloaded', (info) => {
+  logger.info('[AutoUpdater] ¡Descarga completa! Lista para instalar:', JSON.stringify(info))
   mainWindow?.webContents.send('update-downloaded', info)
 })
 
 autoUpdater.on('error', (err) => {
-  logger.error('[AutoUpdater] Error:', err)
+  logger.error('[AutoUpdater] Error:', err?.message ?? String(err))
 })
 
 
@@ -67,6 +81,7 @@ async function createWindow() {
     }
     // ✅ Aquí sí existe mainWindow para buscar actualizaciones, porque esperamos a 'ready-to-show'
     if (!isDev) {
+      logger.info('[AutoUpdater] Iniciando chequeo de actualizaciones (v' + app.getVersion() + ')')
       autoUpdater.checkForUpdatesAndNotify()
     }
   })
