@@ -1,6 +1,6 @@
 {
   "name": "luma-app",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Sistema de gestión integral para salón de belleza",
   "main": "dist/main/main.js",
   "author": "Luma Salon",
@@ -68,7 +68,9 @@
       "target": "nsis"
     },
     "mac": {
-      "target": "dmg"
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ]
     },
     "nsis": {
       "oneClick": false,

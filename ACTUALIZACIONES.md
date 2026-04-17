@@ -33,12 +33,17 @@ Es vital definir el "provider" en la sección `build`:
 Cuando quieras lanzar una actualización, los pasos son:
 
 1. **Subir versión**: Cambia la versión en el `package.json` (ej: de `1.0.0` a `1.1.0`).
-2. **Tag de Git**:
-   ```bash
-   git add .
-   git commit -m "Mejoras en WhatsApp"
-   git tag v1.1.0
-   git push origin v1.1.0
+  2. **Tag de Git**:
+    ```bash
+    # 1. Actualiza package.json
+    "version": "1.0.5"
+
+    # 2. Commit + push + tag
+    git add .
+    git commit -m "feat: ocultar menu bar en produccion"
+    git push origin main
+    git tag v1.0.5
+    git push origin v1.0.5
    ```
 3. **Automatización**: GitHub Actions detectará el tag, compilará la app y creará un "Draft Release" en GitHub.
 4. **Publicar**: Entras a GitHub, revisas que los archivos estén ahí y le das a "Publish Release".

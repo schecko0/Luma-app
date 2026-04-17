@@ -22,11 +22,17 @@ const api = {
 
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
-  onUpdateAvailable: (cb: (info: any) => void) =>
-    ipcRenderer.on('update-available', (_e, info) => cb(info)),
+  onUpdateAvailable: (cb: (info: any) => void) => {
+    const wrapped = (_e: any, info: any) => cb(info)
+    ipcRenderer.on('update-available', wrapped)
+    return () => ipcRenderer.removeListener('update-available', wrapped)
+  },
 
-  onUpdateDownloaded: (cb: (info: any) => void) =>
-    ipcRenderer.on('update-downloaded', (_e, info) => cb(info)),
+  onUpdateDownloaded: (cb: (info: any) => void) => {
+    const wrapped = (_e: any, info: any) => cb(info)
+    ipcRenderer.on('update-downloaded', wrapped)
+    return () => ipcRenderer.removeListener('update-downloaded', wrapped)
+  },
 
   installUpdate: () => ipcRenderer.send('install-update'),
 

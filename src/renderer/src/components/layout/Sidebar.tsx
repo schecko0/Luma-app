@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Scissors, Package, UserRound,
   CalendarDays, ShoppingCart, Vault, BadgeDollarSign,
-  Settings, ChevronLeft, Sparkles, BookOpen,
+  Settings, ChevronLeft, Sparkles, BookOpen,DownloadCloud
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -44,13 +44,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, 
   useEffect(() => {
     window.electronAPI?.getAppVersion().then(setVersion)
 
-    window.electronAPI?.onUpdateAvailable(() => {
+    const removeAvailable = window.electronAPI?.onUpdateAvailable(() => {
       // Opcional: podrías mostrar un indicador de "descargando..."
     })
 
-    window.electronAPI?.onUpdateDownloaded(() => {
+    const removeDownloaded = window.electronAPI?.onUpdateDownloaded(() => {
       setUpdateReady(true)
     })
+
+    return () => {
+      removeAvailable?.()
+      removeDownloaded?.()
+    }
   }, [])
   
   return (
@@ -130,13 +135,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, 
         {/* Versión y botón de actualizar */}
         {!collapsed && (
           <div className="px-2 pb-1">
+            
             {updateReady ? (
               <button
                 onClick={() => window.electronAPI?.installUpdate()}
                 className="w-full text-xs py-1 px-2 rounded-lg font-medium transition-all"
                 style={{ background: 'var(--color-accent)', color: '#fff' }}
               >
-                ⬆ Actualizar ahora
+                <DownloadCloud size={13} className="mr-1" /> Actualizar ahora
               </button>
             ) : (
               <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
