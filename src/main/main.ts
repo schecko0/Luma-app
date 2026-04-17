@@ -30,6 +30,12 @@ autoUpdater.on('error', (err) => {
 
 const isDev = !app.isPackaged
 
+// ── Single instance lock ──────────────────────────────────────────────────
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+}
+
 let mainWindow: BrowserWindow | null = null
 
 async function createWindow() {
@@ -84,6 +90,13 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // Si se intenta abrir una segunda instancia, enfocar la ventana existente
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
   setupLogger()
 
   try {
