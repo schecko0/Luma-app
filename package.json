@@ -17,6 +17,7 @@
     "better-sqlite3": "^11.5.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "electron-updater": "^6.8.3",
     "googleapis": "^171.4.0",
     "lucide-react": "^0.462.0",
     "node-cron": "^4.2.1",
@@ -52,6 +53,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "schecko0",
+        "repo": "Luma-app"
+      }
+    ],
     "files": [
       "dist/**/*",
       "node_modules/**/*"
@@ -64,7 +72,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
     }
   }
 }

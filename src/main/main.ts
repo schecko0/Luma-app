@@ -1,10 +1,16 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'path'
+import { autoUpdater } from 'electron-updater'
 import { getDb, initDatabase } from '../database/database'
 import { registerAllHandlers } from './ipc/handlers'
 import { logger, setupLogger } from './logger'
 import { startSyncWorker } from './ipc/calendarHandlers'
 import { initWhatsAppClient } from './whatsappService'
+
+// Configuración de logs para el updater
+autoUpdater.logger = logger
+autoUpdater.autoDownload = true
+autoUpdater.checkForUpdatesAndNotify()
 
 
 const isDev = !app.isPackaged
