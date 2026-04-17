@@ -20,6 +20,16 @@ const api = {
   selectImageFile: () => ipcRenderer.invoke('app:selectImageFile'),
   readImageAsBase64: (filePath: string) => ipcRenderer.invoke('app:readImageAsBase64', filePath),
 
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  onUpdateAvailable: (cb: (info: any) => void) =>
+    ipcRenderer.on('update-available', (_e, info) => cb(info)),
+
+  onUpdateDownloaded: (cb: (info: any) => void) =>
+    ipcRenderer.on('update-downloaded', (_e, info) => cb(info)),
+
+  installUpdate: () => ipcRenderer.send('install-update'),
+
   // ── EMPLEADOS ─────────────────────────────────────────────────────────
   employees: {
     list:           (p: PaginationParams & { includeInactive?: boolean }) => ipcRenderer.invoke('employees:list', p),

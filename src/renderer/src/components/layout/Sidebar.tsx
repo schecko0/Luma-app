@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Scissors, Package, UserRound,
@@ -37,6 +37,22 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, salonName, salonLogo }) => {
+  
+  const [version, setVersion] = useState<string>('')
+  const [updateReady, setUpdateReady] = useState(false)
+
+  useEffect(() => {
+    window.electronAPI?.getAppVersion().then(setVersion)
+
+    window.electronAPI?.onUpdateAvailable(() => {
+      // Opcional: podrías mostrar un indicador de "descargando..."
+    })
+
+    window.electronAPI?.onUpdateDownloaded(() => {
+      setUpdateReady(true)
+    })
+  }, [])
+  
   return (
     <aside
       className={clsx(
@@ -108,8 +124,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, 
           ))}
       </nav>
 
-      {/* ── Botón colapsar ── */}
+      {/* ── Footer: versión + colapsar ── */}
       <div className="p-2 border-t flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
+
+        {/* Versión y botón de actualizar */}
+        {!collapsed && (
+          <div className="px-2 pb-1">
+            {updateReady ? (
+              <button
+                onClick={() => window.electronAPI?.installUpdate()}
+                className="w-full text-xs py-1 px-2 rounded-lg font-medium transition-all"
+                style={{ background: 'var(--color-accent)', color: '#fff' }}
+              >
+                ⬆ Actualizar ahora
+              </button>
+            ) : (
+              <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                v{version}
+              </p>
+            )}
+          </div>
+        )}
+
         <button
           onClick={onToggle}
           className={clsx(

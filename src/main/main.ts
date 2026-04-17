@@ -10,7 +10,23 @@ import { initWhatsAppClient } from './whatsappService'
 // Configuración de logs para el updater
 autoUpdater.logger = logger
 autoUpdater.autoDownload = true
+
+autoUpdater.on('update-available', (info) => {
+  mainWindow?.webContents.send('update-available', info)
+})
+
+autoUpdater.on('update-downloaded', (info) => {
+  mainWindow?.webContents.send('update-downloaded', info)
+})
+
+autoUpdater.on('error', (err) => {
+  logger.error('[AutoUpdater] Error:', err)
+})
+
 autoUpdater.checkForUpdatesAndNotify()
+
+
+
 
 
 const isDev = !app.isPackaged
@@ -72,6 +88,14 @@ app.whenReady().then(async () => {
   }
 
   registerAllHandlers(ipcMain)
+  // Exponer versión al renderer
+  ipcMain.handle('get-app-version', () => app.getVersion())
+
+  // Instalar update cuando el usuario lo confirme
+  ipcMain.on('install-update', () => {
+    autoUpdater.quitAndInstall()
+  })
+  
   startSyncWorker()
   try {
     const row = getDb().prepare("SELECT value FROM settings WHERE key='wa_enabled'").get() as { value: string } | undefined
