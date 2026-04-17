@@ -1,6 +1,6 @@
 {
   "name": "luma-app",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Sistema de gestión integral para salón de belleza",
   "main": "dist/main/main.js",
   "author": "Luma Salon",
@@ -57,7 +57,8 @@
       {
         "provider": "github",
         "owner": "schecko0",
-        "repo": "Luma-app"
+        "repo": "Luma-app",
+        "releaseType": "release"
       }
     ],
     "files": [

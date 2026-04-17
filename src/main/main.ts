@@ -11,6 +11,14 @@ import { initWhatsAppClient } from './whatsappService'
 autoUpdater.logger = logger
 autoUpdater.autoDownload = true
 
+// Forzar uso de GitHub API REST en lugar del feed HTML (evita error 406)
+autoUpdater.setFeedURL({
+  provider: 'github',
+  owner: 'schecko0',
+  repo: 'Luma-app',
+  releaseType: 'release',
+})
+
 autoUpdater.on('checking-for-update', () => {
   logger.info('[AutoUpdater] Buscando actualizaciones...')
 })
