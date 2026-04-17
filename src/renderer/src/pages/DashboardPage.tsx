@@ -126,10 +126,18 @@ export const DashboardPage: React.FC = () => {
             {/* ── Fila 2: Sparkline de ventas por día ──────────────────── */}
             {stats.dailySales.length > 0 && (
               <div className="luma-surface p-5">
-                <h3 className="text-sm font-medium mb-4" style={{ color: 'var(--color-text)' }}>
-                  Ventas por día
-                </h3>
-                <Sparkline data={stats.dailySales} />
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                    Ventas por día
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Total período:</span>
+                    <span className="text-sm font-bold" style={{ color: 'var(--color-accent)' }}>
+                      {fmt(stats.dailySales.reduce((s, d) => s + d.total, 0))}
+                    </span>
+                  </div>
+                </div>
+                <Sparkline key={`${dateFrom}-${dateTo}`} data={stats.dailySales} />
               </div>
             )}
 
@@ -295,13 +303,13 @@ const KpiCard: React.FC<{ label: string; value: string; sub: string; icon: React
 
 // ── Sparkline SVG de ventas por día ──────────────────────────────────────────
 const Sparkline: React.FC<{ data: { day: string; total: number }[] }> = ({ data }) => {
-  const W = 900, H = 120, PAD = 10
+  const W = 900, H = 160, PAD = 30
   const max = Math.max(...data.map(d => d.total), 1)
   const xStep = (W - PAD * 2) / Math.max(data.length - 1, 1)
 
   const points = data.map((d, i) => ({
     x: PAD + i * xStep,
-    y: H - PAD - ((d.total / max) * (H - PAD * 2)),
+    y: (H - PAD) - ((d.total / max) * (H - PAD * 2)),
     day: d.day,
     total: d.total,
   }))
@@ -311,7 +319,7 @@ const Sparkline: React.FC<{ data: { day: string; total: number }[] }> = ({ data 
 
   return (
     <div className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 120 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: 160 }}>
         <defs>
           <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.3" />
@@ -326,10 +334,10 @@ const Sparkline: React.FC<{ data: { day: string; total: number }[] }> = ({ data 
             {/* Etiquetas en los extremos y el punto más alto */}
             {(i === 0 || i === points.length - 1 || p.total === max) && (
               <>
-                <text x={p.x} y={p.y - 8} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">
+                <text x={p.x} y={p.y - 12} textAnchor="middle" fontSize="11" fontWeight="bold" fill="var(--color-text)">
                   {fmt(p.total)}
                 </text>
-                <text x={p.x} y={H - 1} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)">
+                <text x={p.x} y={H - 5} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">
                   {fmtDate(p.day)}
                 </text>
               </>

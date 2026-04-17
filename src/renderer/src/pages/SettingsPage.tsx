@@ -4,14 +4,15 @@ import {
   Calendar, Check, AlertCircle, RefreshCw, ExternalLink,
   ChevronDown, ChevronUp, Eye, EyeOff, ShieldCheck,
   Database, Download, Upload, FileText, History, Terminal,
-  AlertTriangle, Trash2, Info, Activity,MessageCircle, Wifi, WifiOff, Send, Clock, ToggleLeft, ToggleRight
+  AlertTriangle, Trash2, Info, Activity, MessageCircle, Wifi, WifiOff, Send, Clock, ToggleLeft, ToggleRight,
+  Percent, Users,
 } from 'lucide-react'
 
 import { PageHeader, Spinner, Paginator, Badge } from '../components/ui/index'
 
 import { Modal } from '../components/ui/Modal'
 import { applyTheme } from '../hooks/useAppState'
-import { ErrorLog, WhatsAppReminderLog } from '../types'
+import { ErrorLog, WhatsAppReminderLog, CommissionMode } from '../types'
 
 interface SettingsForm {
   salon_name: string
@@ -29,6 +30,8 @@ interface SettingsForm {
   wa_confirm_on_create: string
   wa_template_confirm: string
   wa_logo_path: string
+  commission_mode: CommissionMode
+  overhead_pct: string
 }
 
 const DEFAULTS: SettingsForm = {
@@ -39,11 +42,12 @@ const DEFAULTS: SettingsForm = {
   custom_text_muted: '#8a8070', custom_success: '#4caf7d', custom_danger: '#dc4a3d',
   custom_warning: '#e8a838', custom_info: '#4a90d9',
   google_client_id: '', google_secret: '',wa_confirm_on_create: 'false', wa_template_confirm: '', wa_logo_path: '',
+  commission_mode: 'simple' as CommissionMode, overhead_pct: '0',
 }
 
 const CURRENCIES = ['MXN', 'USD', 'EUR', 'COP', 'ARS', 'CLP', 'PEN']
 
-type TabId = 'general' | 'appearance' | 'google' | 'whatsapp' | 'system'
+type TabId = 'general' | 'appearance' | 'google' | 'whatsapp' | 'commissions' | 'system'
 
 export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
   const [activeTab, setActiveTab] = useState<TabId>('general')
@@ -122,6 +126,8 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
           wa_confirm_on_create: d.wa_confirm_on_create ?? prev.wa_confirm_on_create,
           wa_template_confirm:  d.wa_template_confirm  ?? prev.wa_template_confirm,
           wa_logo_path:         d.wa_logo_path         ?? prev.wa_logo_path,
+          commission_mode: (d.commission_mode ?? 'simple') as CommissionMode,
+          overhead_pct:    d.overhead_pct    ?? '0',
         }))
       }
       setLoading(false)
@@ -308,6 +314,8 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         custom_info:       form.custom_info,
         google_client_id:  form.google_client_id.trim(),
         google_secret:     form.google_secret.trim(),
+        commission_mode:   form.commission_mode,
+        overhead_pct:      String(parseFloat(form.overhead_pct) || 0),
       })
       if (!res.ok) { setError(res.error ?? 'Error al guardar'); return }
       setSaved(true)
@@ -335,11 +343,12 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
   const hasCredentials = form.google_client_id.trim().length > 0 && form.google_secret.trim().length > 0
 
   const tabs: { id: TabId, label: string, icon: React.ReactNode }[] = [
-    { id: 'general',    label: 'General',    icon: <Store size={14} /> },
-    { id: 'appearance', label: 'Apariencia', icon: <Palette size={14} /> },
-    { id: 'google',     label: 'Google',     icon: <Calendar size={14} /> },
-    { id: 'system',     label: 'Sistema',    icon: <Terminal size={14} /> },
-    { id: 'whatsapp',   label: 'WhatsApp',   icon: <MessageCircle size={14} /> },
+    { id: 'general',     label: 'General',     icon: <Store size={14} /> },
+    { id: 'appearance',  label: 'Apariencia',  icon: <Palette size={14} /> },
+    { id: 'google',      label: 'Google',      icon: <Calendar size={14} /> },
+    { id: 'commissions', label: 'Comisiones',  icon: <Percent size={14} /> },
+    { id: 'system',      label: 'Sistema',     icon: <Terminal size={14} /> },
+    { id: 'whatsapp',    label: 'WhatsApp',    icon: <MessageCircle size={14} /> },
   ]
 
   return (
@@ -936,6 +945,106 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
             </>
           )}
 
+          {/* ── Tab: Comisiones (Bloque 5) ─────────────────────────────── */}
+          {activeTab === 'commissions' && (
+            <Section title="Motor de Comisiones" icon={<Percent size={16} />}>
+              <div className="flex flex-col gap-6">
+                <div>
+                  <label className="luma-label mb-3">Modo de cálculo</label>
+                  <div className="grid grid-cols-1 gap-3">
+                    {[
+                      {
+                        id: 'simple',
+                        title: 'Modo A — Simple (Default)',
+                        desc: 'Cada colaborador recibe su comisión completa. Si hay varios colaboradores, el margen del salón se reduce.',
+                        icon: <Users size={16} />
+                      },
+                      {
+                        id: 'proportional',
+                        title: 'Modo B — Proporcional Automático',
+                        desc: 'La comisión se divide automáticamente entre el número de colaboradores (50/50, 33/33, etc).',
+                        icon: <RefreshCw size={16} />
+                      },
+                      {
+                        id: 'manual',
+                        title: 'Modo C — Proporcional Manual',
+                        desc: 'Permite asignar porcentajes de participación específicos a cada colaborador en el POS.',
+                        icon: <Settings size={16} />
+                      }
+                    ].map(m => (
+                      <button key={m.id} type="button" onClick={() => set('commission_mode', m.id as CommissionMode)}
+                        className="flex items-start gap-3 p-4 rounded-xl border text-left transition-all"
+                        style={{
+                          borderColor: form.commission_mode === m.id ? 'var(--color-accent)' : 'var(--color-border)',
+                          background:  form.commission_mode === m.id ? 'color-mix(in srgb,var(--color-accent) 8%,transparent)' : 'var(--color-surface-2)',
+                        }}>
+                        <div className="mt-0.5" style={{ color: form.commission_mode === m.id ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
+                          {m.icon}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold" style={{ color: form.commission_mode === m.id ? 'var(--color-accent)' : 'var(--color-text)' }}>
+                            {m.title}
+                          </p>
+                          <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)', lineHeight: '1.4' }}>
+                            {m.desc}
+                          </p>
+                        </div>
+                        <div className="mt-1">
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${form.commission_mode === m.id ? 'border-[var(--color-accent)]' : 'border-[var(--color-border)]'}`}>
+                            {form.commission_mode === m.id && <div className="w-2 h-2 rounded-full bg-[var(--color-accent)]" />}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {form.commission_mode === 'manual' && (
+                  <div className="pt-4 border-t flex flex-col gap-4 animate-fade-in" style={{ borderColor: 'var(--color-border)' }}>
+                    <div>
+                      <label className="luma-label">Costos fijos / Reserva de Insumos (Overhead %)</label>
+                      <div className="flex items-center gap-3">
+                        <input type="number" min="0" max="100" step="1"
+                          value={form.overhead_pct}
+                          onFocus={e => e.target.select()}
+                          onChange={e => set('overhead_pct', e.target.value)}
+                          className="luma-input w-24" data-selectable />
+                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>%</span>
+                      </div>
+                      <div className="mt-2 p-3 rounded-lg border border-[var(--color-warning)] bg-[color-mix(in srgb,var(--color-warning) 10%,transparent)]">
+                        <p className="text-[10px] leading-relaxed" style={{ color: 'var(--color-warning)' }}>
+                          <strong>⚠️ AVISO DE TRANSPARENCIA:</strong> Al activar un % de Overhead, la comisión del colaborador se calcula sobre el 
+                          remanente neto, no sobre el precio total al público. 
+                          <br /><em>Ejemplo: Si un servicio cuesta $100 y hay 10% de overhead, el empleado verá que su comisión se calcula sobre $90.</em>
+                          <br /><strong>Se recomienda informar a su equipo que este porcentaje cubre el costo de los materiales que utilizan.</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg p-4 flex flex-col gap-2" style={{ background: 'color-mix(in srgb,var(--color-info) 8%,transparent)' }}>
+                      <p className="text-xs font-bold" style={{ color: 'var(--color-info)' }}>Ejemplo de transparencia para el empleado:</p>
+                      <div className="flex flex-col gap-1 mt-1">
+                        <PreviewRow label="Precio cobrado al cliente" value="$1,000.00" />
+                        <PreviewRow label={`Reserva para Insumos (${form.overhead_pct}%)`} value={`- $${(1000 * parseFloat(form.overhead_pct || '0') / 100).toFixed(2)}`} />
+                        <div className="h-px my-1 bg-white/10" />
+                        <PreviewRow label="Base para cálculo de comisiones" value={`$${(1000 * (1 - parseFloat(form.overhead_pct || '0') / 100)).toFixed(2)}`} accent />
+                        <div className="mt-2 p-2 rounded bg-black/20">
+                           <p className="text-[10px] opacity-90" style={{ color: 'var(--color-text)' }}>
+                            Si el empleado tiene <strong>40% de comisión</strong>, recibirá:<br />
+                            <span className="text-sm font-bold" style={{ color: 'var(--color-success)' }}>
+                              ${(1000 * (1 - parseFloat(form.overhead_pct || '0') / 100) * 0.4).toFixed(2)}
+                            </span>
+                            <span className="text-[9px] block opacity-60">En lugar de $400.00 (sin overhead).</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+
           {/* ── Tab: Sistema (Fase 12 y 13) ─────────────────────────────── */}
           {activeTab === 'system' && (
             <>
@@ -1336,5 +1445,13 @@ const Section: React.FC<{ title: string; icon: React.ReactNode; badge?: string; 
       )}
     </div>
     {children}
+  </div>
+)
+
+// ── PreviewRow para ejemplos numéricos en tab Comisiones ─────────────────────
+const PreviewRow: React.FC<{ label: string; value: string; accent?: boolean }> = ({ label, value, accent }) => (
+  <div className="flex justify-between text-xs">
+    <span style={{ color: 'var(--color-text-muted)' }}>{label}</span>
+    <span className="font-medium" style={{ color: accent ? 'var(--color-accent)' : 'var(--color-text)' }}>{value}</span>
   </div>
 )

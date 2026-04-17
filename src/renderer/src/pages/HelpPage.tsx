@@ -350,6 +350,16 @@ const PosGuide = () => (
       Este impuesto <em>no</em> se aplica en ventas normales; solo cuando se activa explícitamente.
     </p>
 
+    <SectionTitle>Modo de Comisión Activo</SectionTitle>
+    <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+      En la parte superior del buscador de servicios verás un banner que indica el modo de cálculo actual:
+    </p>
+    <ul className="list-disc ml-5 mt-2 text-xs flex flex-col gap-1" style={{ color: 'var(--color-text-muted)' }}>
+      <li><strong style={{ color: 'var(--color-text)' }}>Modo A — Simple:</strong> Cada colaborador recibe su % de comisión íntegro.</li>
+      <li><strong style={{ color: 'var(--color-text)' }}>Modo B — Proporcional:</strong> La comisión se divide automáticamente según el número de colaboradores.</li>
+      <li><strong style={{ color: 'var(--color-text)' }}>Modo C — Manual:</strong> Permite asignar porcentajes específicos por persona y descuenta el overhead configurado.</li>
+    </ul>
+
     <SectionTitle>Historial de ventas</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
       La columna derecha muestra las ventas del día actual. Puedes hacer clic en cualquier venta para
@@ -405,7 +415,14 @@ const CommissionsGuide = () => (
     <SectionTitle>Generar un nuevo cuadre</SectionTitle>
 
     <HelpStep number={1} title="Seleccionar periodo y opciones"
-      body="Elige el rango de fechas. Si deseas que en este corte se pague también el sueldo base mensual de los empleados, activa el botón '¿Incluir sueldos base?'. Si ya lo pagaste en un corte anterior, déjalo desactivado para calcular solo comisiones." />
+      body="Elige el rango de fechas. Si deseas que en este corte se pague también el sueldo base mensual de los empleados, activa el chip '¿Incluir sueldos base?'. Si ya lo pagaste en un corte anterior, déjalo desactivado para calcular solo comisiones." />
+
+    <CalloutBox icon={<Info size={16} />} variant="info" title="Diferencia entre Comisiones y Sueldos">
+      <ul className="list-disc ml-5 text-[10px] flex flex-col gap-1">
+        <li><strong>Solo Comisiones:</strong> Ideal para pagos semanales o quincenales basados solo en productividad.</li>
+        <li><strong>Con Sueldos Base:</strong> Ideal para cortes donde se pagan sueldos base. Suma el 'sueldo base' configurado en la ficha de cada empleado al total de sus comisiones del periodo.</li>
+      </ul>
+    </CalloutBox>
 
     <HelpStep number={2} title="Revisar el pre-cuadre"
       body="Verás el total facturado y el 'Total a repartir' (que incluye comisiones + sueldos si se activaron). La tabla por empleado es colapsable; haz clic para ver el detalle de cada ticket, fecha y si el empleado actuó como Jefe o Auxiliar." />
@@ -705,6 +722,21 @@ const SettingsGuide = () => (
       mensajes personalizados para cada tipo de recordatorio, la pausa entre mensajes para evitar
       bloqueos (recomendado: mínimo 12 segundos) y los horarios en los que se permiten envíos.
     </p>
+
+    <SectionTitle>Pestaña: Comisiones</SectionTitle>
+    <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+      Define cómo el sistema debe calcular el pago a tus colaboradores. Puedes elegir entre:
+    </p>
+    <ul className="list-disc ml-5 mt-2 text-xs flex flex-col gap-1" style={{ color: 'var(--color-text-muted)' }}>
+      <li><strong style={{ color: 'var(--color-text)' }}>Modo Simple:</strong> Pago íntegro por servicio.</li>
+      <li><strong style={{ color: 'var(--color-text)' }}>Proporcional Automático:</strong> Reparto equitativo si participan varios especialistas.</li>
+      <li><strong style={{ color: 'var(--color-text)' }}>Proporcional Manual:</strong> Permite ajuste fino por colaborador y definir una <strong>Reserva para Insumos (Overhead)</strong>.</li>
+    </ul>
+
+    <CalloutBox icon={<AlertTriangle size={16} />} variant="warning" title="Importante: Transparencia con el equipo">
+      Si utilizas la <strong>Reserva para Insumos (Overhead)</strong>, el sistema descontará ese porcentaje del precio total antes de calcular el 40%, 30%, etc. del colaborador. 
+      Esto se utiliza para cubrir el costo de materiales (tintes, productos) y debe ser acordado con el colaborador para evitar confusiones sobre su pago neto.
+    </CalloutBox>
 
     <SectionTitle>Pestaña: Sistema</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>

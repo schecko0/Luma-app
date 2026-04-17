@@ -8,6 +8,49 @@ import type {
 
 export function registerInvoiceHandlers(ipcMain: IpcMain) {
 
+  // ── Helper: leer modo de comisiones desde settings ───────────────────
+  function getCommissionSettings() {
+    const db = getDb()
+    const modeRow = db.prepare("SELECT value FROM settings WHERE key = 'commission_mode'").get() as { value: string } | undefined
+    const ovhdRow = db.prepare("SELECT value FROM settings WHERE key = 'overhead_pct'").get()  as { value: string } | undefined
+    return {
+      mode:        (modeRow?.value ?? 'simple') as 'simple' | 'proportional' | 'manual',
+      overheadPct: parseFloat(ovhdRow?.value ?? '0'),
+    }
+  }
+
+  // ── Helper: calcular comisión de un auxiliar según el modo activo ────────
+  function calcularComision(
+    lineTotal:      number,
+    employeeCount:  number,
+    commissionPct:  number,
+    mode:           'simple' | 'proportional' | 'manual',
+    workSplitPct:   number,
+    overheadPct:    number = 0,
+  ): { commissionAmount: number; effectiveSplitPct: number } {
+    let factor: number
+    let effectiveSplitPct: number
+
+    if (mode === 'proportional' && employeeCount > 1) {
+      factor            = 1 / employeeCount
+      effectiveSplitPct = parseFloat((100 / employeeCount).toFixed(4))
+    } else if (mode === 'manual' && workSplitPct > 0) {
+      factor            = workSplitPct / 100
+      effectiveSplitPct = workSplitPct
+    } else {
+      factor            = 1
+      effectiveSplitPct = 100
+    }
+
+    // Aplicar overhead solo en Modo C (manual) según el requerimiento
+    const baseTotal = mode === 'manual' ? lineTotal * (1 - overheadPct / 100) : lineTotal
+
+    return {
+      commissionAmount:  baseTotal * (commissionPct / 100) * factor,
+      effectiveSplitPct,
+    }
+  }
+
   // ── Crear factura (transacción atómica completa) ───────────────────────
   ipcMain.handle('invoices:create', (_e, payload: CreateInvoicePayload) => {
     try {
@@ -35,17 +78,20 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
         // 3. Crear la factura
         const folio = getNextInvoiceFolio()
         const now   = nowISO()
+        const { mode, overheadPct } = getCommissionSettings()
 
         const invoiceResult = db.prepare(`
           INSERT INTO invoices (
             folio, register_id, client_id, created_by,
             subtotal, tax_rate, tax_amount, total,
             status, requires_official_invoice, notes,
+            commission_mode,
             created_at, updated_at
           ) VALUES (
             @folio, @register_id, @client_id, @created_by,
             @subtotal, @tax_rate, @tax_amount, @total,
             'paid', @requires_official_invoice, @notes,
+            @commission_mode,
             @created_at, @updated_at
           )
         `).run({
@@ -56,14 +102,18 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
           subtotal, tax_rate: taxRate, tax_amount: taxAmount, total,
           requires_official_invoice: payload.requires_official_invoice ? 1 : 0,
           notes: payload.notes,
+          commission_mode: mode,
           created_at: now, updated_at: now,
         })
 
         const invoiceId = invoiceResult.lastInsertRowid as number
 
         // 4. Procesar cada servicio
+        // (mode y overheadPct ya fueron leídos arriba)
+
         for (const svc of payload.services) {
           const lineTotal = svc.unit_price * svc.quantity
+          const employeeCount = svc.employee_ids.length
 
           // Validar que tenga al menos 1 empleado asignado
           if (svc.employee_ids.length === 0) {
@@ -90,22 +140,30 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
           // 5. Calcular comisiones de empleados auxiliares
           let totalAuxCommission = 0
 
-          for (const empId of svc.employee_ids) {
+          for (let idx = 0; idx < svc.employee_ids.length; idx++) {
+            const empId = svc.employee_ids[idx]
             const empRow = db.prepare('SELECT commission_pct, first_name, last_name FROM employees WHERE id = ?').get(empId) as { commission_pct: number; first_name: string; last_name: string } | undefined
             if (!empRow) continue
-            // Comisión del auxiliar = line_total * commission_pct / 100
-            const commissionAmount = lineTotal * (empRow.commission_pct / 100)
-            totalAuxCommission    += commissionAmount
+
+            const workSplitPct = (mode === 'manual' && svc.work_splits?.[idx] != null)
+              ? svc.work_splits![idx]
+              : 0
+
+            const { commissionAmount, effectiveSplitPct } = calcularComision(
+              lineTotal, employeeCount, empRow.commission_pct, mode, workSplitPct, overheadPct,
+            )
+            totalAuxCommission += commissionAmount
 
             db.prepare(`
               INSERT INTO invoice_service_employees
                 (invoice_service_id, employee_id, commission_pct, work_split_pct, commission_amount, is_owner, created_at)
               VALUES
-                (@invoice_service_id, @employee_id, @commission_pct, 100, @commission_amount, 0, @created_at)
+                (@invoice_service_id, @employee_id, @commission_pct, @work_split_pct, @commission_amount, 0, @created_at)
             `).run({
               invoice_service_id: invServiceId,
               employee_id:        empId,
               commission_pct:     empRow.commission_pct,
+              work_split_pct:     effectiveSplitPct,
               commission_amount:  commissionAmount,
               created_at:         now,
             })
@@ -229,6 +287,7 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
         `SELECT COUNT(*) as total FROM invoices i LEFT JOIN clients c ON c.id = i.client_id ${where}`
       ).get(...args) as { total: number }
 
+
       return { ok: true, data: { items: rows, total, page, pageSize } }
     } catch (err: unknown) { return { ok: false, error: String(err) } }
   })
@@ -244,6 +303,7 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
         LEFT JOIN users u   ON u.id = i.created_by
         WHERE i.id = ?
       `).get(id) as Invoice | undefined
+
       if (!invoice) return { ok: false, error: 'Factura no encontrada.' }
 
       const services = db.prepare('SELECT * FROM invoice_services WHERE invoice_id = ?').all(id) as InvoiceServiceLine[]

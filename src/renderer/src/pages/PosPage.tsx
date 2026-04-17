@@ -2,17 +2,17 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   ShoppingCart, Plus, Trash2, Users, Receipt, Check,
   AlertCircle, Loader2, FileText, X, UserRound, Crown,
-  Search, HelpCircle,
+  Search, HelpCircle, Percent,
 } from 'lucide-react'
 import type {
   Service, Client, Employee, CashRegister,
-  CreateInvoicePayload, PaymentMethod, Invoice, PaginatedResult,
+  CreateInvoicePayload, PaymentMethod, Invoice, PaginatedResult, CommissionMode,
 } from '../types'
 import { PageHeader, Badge, Spinner, Paginator } from '../components/ui/index'
 import { Autocomplete } from '../components/pos/Autocomplete'
 import { Modal } from '../components/ui/Modal'
 
-interface CartEmployee { employee_id: number; full_name: string; commission_pct: number }
+interface CartEmployee { employee_id: number; full_name: string; commission_pct: number; work_split_pct?: number }
 interface CartLine {
   _key: string
   service_id: number; service_name: string; unit_price: number
@@ -73,6 +73,8 @@ const SaleView: React.FC = () => {
   const [client, setClient]          = useState<{ id: number; label: string } | null>(null)
   const [openRegister, setOpenReg]   = useState<CashRegister | null>(null)
   const [taxRate, setTaxRate]        = useState(0)
+  const [commissionMode, setCommissionMode] = useState<CommissionMode>('simple')
+  const [overheadPct, setOverheadPct] = useState(0)
   const [payments, setPayments]      = useState<PaymentLine[]>([{ method: 'cash', amount: 0, reference: '' }])
   const [requiresInvoice, setReqInv] = useState(false)
   const [notes, setNotes]            = useState('')
@@ -93,10 +95,16 @@ const SaleView: React.FC = () => {
       window.electronAPI.cash.getOpen(),
       window.electronAPI.invoices.getTaxRate(),
       window.electronAPI.employees.all(),
-    ]).then(([cashRes, taxRes, empRes]) => {
+      window.electronAPI.settings.getAll(),
+    ]).then(([cashRes, taxRes, empRes, settingsRes]) => {
       if (cashRes.ok) setOpenReg(cashRes.data as CashRegister)
       if (taxRes.ok)  setTaxRate(taxRes.data as number)
       if (empRes.ok)  setAllEmp(empRes.data as Employee[])
+      if (settingsRes.ok) {
+        const d = settingsRes.data as Record<string, string>
+        setCommissionMode((d.commission_mode ?? 'simple') as CommissionMode)
+        setOverheadPct(parseFloat(d.overhead_pct ?? '0'))
+      }
     })
   }, [])
 
@@ -136,6 +144,12 @@ const SaleView: React.FC = () => {
   const removeEmployee = (lineKey: string, empId: number) =>
     setCart(prev => prev.map(l => l._key !== lineKey ? l : { ...l, employees: l.employees.filter(e => e.employee_id !== empId) }))
 
+  const updateWorkSplit = (lineKey: string, empId: number, pct: number) =>
+    setCart(prev => prev.map(l => {
+      if (l._key !== lineKey) return l
+      return { ...l, employees: l.employees.map(e => e.employee_id === empId ? { ...e, work_split_pct: pct } : e) }
+    }))
+
   const usedMethods      = payments.map(p => p.method)
   const availableMethods = (['cash', 'card', 'transfer'] as PaymentMethod[]).filter(m => !usedMethods.includes(m))
   const addPayment       = () => { if (availableMethods.length === 0) return; setPayments(prev => [...prev, { method: availableMethods[0], amount: remaining > 0 ? remaining : 0, reference: '' }]) }
@@ -161,6 +175,15 @@ const SaleView: React.FC = () => {
       if (line.employees.length === 0 && !line.owner_employee_id) {
         setError(`"${line.service_name}" no tiene empleado ni jefe. Asigna al menos uno.`); return
       }
+
+      // Validar que la suma de participaciones sea 100% en Modo C
+      if (commissionMode === 'manual' && line.employees.length > 0) {
+        const totalSplit = line.employees.reduce((s, e) => s + (e.work_split_pct ?? (100 / line.employees.length)), 0)
+        if (Math.abs(totalSplit - 100) > 0.5) {
+          setError(`La participación en "${line.service_name}" debe sumar 100% (actual: ${totalSplit.toFixed(1)}%).`)
+          return
+        }
+      }
     }
     if (!paymentOk) { setError(`Falta ${fmt(remaining)} por asignar al método de pago.`); return }
     if (!client) { setConfirmNoClient(true); return }
@@ -180,6 +203,10 @@ const SaleView: React.FC = () => {
         service_id: l.service_id, service_name: l.service_name,
         unit_price: l.unit_price, quantity: l.quantity,
         employee_ids: l.employees.map(e => e.employee_id),
+        // Modo C: enviar work_splits si el modo es manual
+        ...(commissionMode === 'manual' && l.employees.length > 0
+          ? { work_splits: l.employees.map(e => e.work_split_pct ?? (100 / l.employees.length)) }
+          : {}),
       })),
       payments: payments.filter(p => p.amount > 0).map(p => ({
         payment_method: p.method, amount: p.amount, reference: p.reference || undefined,
@@ -228,6 +255,22 @@ const SaleView: React.FC = () => {
         {/* Panel izquierdo */}
         <div className="flex-1 flex flex-col overflow-hidden border-r" style={{ borderColor: 'var(--color-border)' }}>
           <div className="p-4 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
+            {/* Banner de Modo de Comisión */}
+            <div className="mt-3 mb-4 flex items-center gap-2 px-3 py-2 rounded-lg border text-[10px] uppercase font-bold tracking-wider"
+                 style={{ 
+                   borderColor: 'var(--color-border)',
+                   background: 'var(--color-surface-2)',
+                   color: 'var(--color-text-muted)'
+                 }}>
+              <Percent size={12} style={{ color: 'var(--color-accent)' }} />
+              <span>Modo activo: </span>
+              <span style={{ color: 'var(--color-accent)' }}>
+                {commissionMode === 'simple' && 'Modo A — Simple'}
+                {commissionMode === 'proportional' && 'Modo B — Proporcional Automático'}
+                {commissionMode === 'manual' && `Modo C — Manual (${overheadPct}% Overhead)`}
+              </span>
+            </div>
+            
             <Autocomplete
               placeholder="Buscar servicio por nombre..."
               icon={<ShoppingCart size={14} />}
@@ -245,6 +288,8 @@ const SaleView: React.FC = () => {
                 if (svc) addService(svc)
               }}
             />
+
+            
           </div>
 
           {/* ── Banner de éxito — persiste hasta que el cajero empiece otra venta ── */}
@@ -293,6 +338,9 @@ const SaleView: React.FC = () => {
                 onToggleEmployees={() => toggleEmployees(line._key)}
                 onAddEmployee={emp => addEmployee(line._key, emp)}
                 onRemoveEmployee={id => removeEmployee(line._key, id)}
+                onUpdateWorkSplit={(empId, pct) => updateWorkSplit(line._key, empId, pct)}
+                commissionMode={commissionMode}
+                overheadPct={overheadPct}
               />
             ))}
           </div>
@@ -434,7 +482,10 @@ const CartLineCard: React.FC<{
   onRemove: () => void; onUpdateQty: (q: number) => void
   onToggleEmployees: () => void; onAddEmployee: (emp: Employee) => void
   onRemoveEmployee: (id: number) => void
-}> = ({ line, availableEmployees, onRemove, onUpdateQty, onToggleEmployees, onAddEmployee, onRemoveEmployee }) => {
+  onUpdateWorkSplit: (empId: number, pct: number) => void
+  commissionMode: CommissionMode
+  overheadPct: number
+}> = ({ line, availableEmployees, onRemove, onUpdateQty, onToggleEmployees, onAddEmployee, onRemoveEmployee, onUpdateWorkSplit, commissionMode, overheadPct }) => {
   const isValid = !!line.owner_employee_id || line.employees.length > 0
   return (
     <div className="luma-surface p-3 flex flex-col gap-2">
@@ -487,20 +538,63 @@ const CartLineCard: React.FC<{
 
       {line.showEmployees && (
         <div className="flex flex-col gap-2 pl-2 border-l-2" style={{ borderColor: 'var(--color-border)' }}>
-          {line.employees.map(emp => (
-            <div key={emp.employee_id} className="flex items-center gap-2">
-              <span className="text-xs flex-1" style={{ color: 'var(--color-text)' }}>
-                {emp.full_name}<span className="ml-1" style={{ color: 'var(--color-text-muted)' }}>({emp.commission_pct}%)</span>
-              </span>
-              <span className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>
-                {fmt(line.line_total * emp.commission_pct / 100)}
-              </span>
-              <button onClick={() => onRemoveEmployee(emp.employee_id)}
-                className="luma-btn-ghost p-0.5 rounded" style={{ color: 'var(--color-danger)' }}>
-                <X size={11} />
-              </button>
+          {/* Modo B: badge informativo del factor automático */}
+          {commissionMode === 'proportional' && line.employees.length > 1 && (
+            <div className="text-xs px-2 py-1 rounded-lg"
+                 style={{ background: 'color-mix(in srgb,var(--color-info) 10%,transparent)', color: 'var(--color-info)' }}>
+              Factor automático: {(100 / line.employees.length).toFixed(1)}% por colaborador
             </div>
-          ))}
+          )}
+          {/* Validación Modo C: suma de splits debe ser 100 */}
+          {commissionMode === 'manual' && line.employees.length > 0 && (() => {
+            const total = line.employees.reduce((s, e) => s + (e.work_split_pct ?? (100 / line.employees.length)), 0)
+            return Math.abs(total - 100) > 0.5 ? (
+              <div className="text-xs px-2 py-1 rounded-lg"
+                   style={{ background: 'color-mix(in srgb,var(--color-warning) 10%,transparent)', color: 'var(--color-warning)' }}>
+                La participación debe sumar 100% (actual: {total.toFixed(1)}%)
+              </div>
+            ) : null
+          })()}
+          {line.employees.map(emp => {
+            const defaultSplit = line.employees.length > 0 ? parseFloat((100 / line.employees.length).toFixed(1)) : 100
+            const split = emp.work_split_pct ?? defaultSplit
+            const factor = commissionMode === 'proportional' && line.employees.length > 1
+              ? 1 / line.employees.length
+              : commissionMode === 'manual' ? split / 100 : 1
+            
+            // Aplicar overhead solo en Modo C (manual) para el preview
+            const baseTotal = commissionMode === 'manual' ? line.line_total * (1 - overheadPct / 100) : line.line_total
+            const effectiveAmount = baseTotal * (emp.commission_pct / 100) * factor
+            
+            return (
+              <div key={emp.employee_id} className="flex items-center gap-2">
+                <span className="text-xs flex-1" style={{ color: 'var(--color-text)' }}>
+                  {emp.full_name}<span className="ml-1" style={{ color: 'var(--color-text-muted)' }}>({emp.commission_pct}%)</span>
+                </span>
+                {/* Modo C: input de participación */}
+                {commissionMode === 'manual' && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min="1" max="100" step="1"
+                      value={split}
+                      onFocus={e => e.target.select()}
+                      onChange={e => onUpdateWorkSplit(emp.employee_id, parseFloat(e.target.value) || 0)}
+                      className="w-14 text-center text-xs luma-input py-1 px-1"
+                      data-selectable
+                    />
+                    <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>%</span>
+                  </div>
+                )}
+                <span className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>
+                  {fmt(effectiveAmount)}
+                </span>
+                <button onClick={() => onRemoveEmployee(emp.employee_id)}
+                  className="luma-btn-ghost p-0.5 rounded" style={{ color: 'var(--color-danger)' }}>
+                  <X size={11} />
+                </button>
+              </div>
+            )
+          })}
           {availableEmployees.length > 0 && (
             <select className="luma-input text-xs py-1" value=""
               onChange={e => {
@@ -615,7 +709,11 @@ const InvoiceHistoryView: React.FC = () => {
                   <td className="px-4 py-3 font-mono text-xs" style={{ color: 'var(--color-accent)' }}>{inv.folio}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--color-text)' }}>
                     {inv.client_name ?? '— Público general'}
-                    {inv.requires_official_invoice && <Badge variant="warning" className="ml-2"><Receipt size={9} /></Badge>}
+                    {Boolean(inv.requires_official_invoice) && (
+                      <Badge variant="warning" className="ml-2">
+                        <Receipt size={9} />
+                      </Badge>
+                    )}
                   </td>
                   <td className="px-4 py-3 font-medium" style={{ color: 'var(--color-text)' }}>{fmt(inv.total)}</td>
                   <td className="px-4 py-3">
@@ -681,6 +779,14 @@ const InvoiceHistoryView: React.FC = () => {
 
 const InvoiceDetail: React.FC<{ invoice: Invoice }> = ({ invoice }) => (
   <div className="flex flex-col gap-4">
+    <div className="flex items-center justify-between p-2 rounded-lg border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+       <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Esquema de Comisiones:</span>
+       <Badge variant="info" className="text-[10px] uppercase">
+         {invoice.commission_mode === 'simple' ? 'Modo A — Simple' : 
+          invoice.commission_mode === 'proportional' ? 'Modo B — Proporcional' : 
+          invoice.commission_mode === 'manual' ? 'Modo C — Manual' : 'Desconocido'}
+       </Badge>
+    </div>
     <div>
       <p className="text-xs font-medium mb-2" style={{ color: 'var(--color-text-muted)' }}>SERVICIOS</p>
       {invoice.services?.map(svc => (

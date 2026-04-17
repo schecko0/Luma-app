@@ -56,6 +56,8 @@ function runMigrations() {
   if (current < 5) applyMigration5()   // ← Google OAuth tokens del salón
   if (current < 6) applyMigration6()   // ← WhatsApp reminder log + settings
   if (current < 7) applyMigration7()   // ← commission_run_id en invoice_service_employees
+  if (current < 8) applyMigration8()   // ← Motor de comisiones: modo + overhead
+  if (current < 9) applyMigration9()   // ← Guardar modo de comisión en cada factura
 }
 
 function getCurrentVersion(): number {
@@ -573,6 +575,38 @@ function applyMigration7() {
   migrate()
   setVersion(7)
   log('Migración 7 completada.')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 8 — Motor de comisiones: modo de cálculo + overhead
+// ─────────────────────────────────────────────────────────────────────────────
+function applyMigration8() {
+  log('Aplicando migración 8: settings del motor de comisiones...')
+  const migrate = db.transaction(() => {
+    db.exec(`
+      INSERT OR IGNORE INTO settings (key, value) VALUES
+        ('commission_mode',  'simple'),
+        ('overhead_pct',     '0');
+    `)
+  })
+  migrate()
+  setVersion(8)
+  log('Migración 8 completada.')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 9 — Guardar modo de comisión en cada factura (Auditoría)
+// ─────────────────────────────────────────────────────────────────────────────
+function applyMigration9() {
+  log('Aplicando migración 9: columna commission_mode en invoices...')
+  const migrate = db.transaction(() => {
+    db.exec(`
+      ALTER TABLE invoices ADD COLUMN commission_mode TEXT DEFAULT 'simple';
+    `)
+  })
+  migrate()
+  setVersion(9)
+  log('Migración 9 completada.')
 }
 
 function applyMigration6() {

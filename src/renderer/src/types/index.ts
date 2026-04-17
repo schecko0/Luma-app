@@ -125,6 +125,7 @@ export interface Invoice {
   id: number; folio: string; register_id: number | null; client_id: number | null
   created_by: number; subtotal: number; tax_rate: number; tax_amount: number; total: number
   status: InvoiceStatus; requires_official_invoice: boolean
+  commission_mode?: CommissionMode
   cancellation_reason: string | null; cancelled_by: number | null; cancelled_at: string | null
   notes: string | null; created_at: string; updated_at: string
   client_name?: string; created_by_username?: string
@@ -166,6 +167,9 @@ export interface CreateInvoicePayload {
     unit_price: number; quantity: number
     // Solo empleados auxiliares — el jefe se resuelve automáticamente desde service.owner_employee_id
     employee_ids: number[]
+    // Modo C: porcentaje de participación por auxiliar (índice paralelo a employee_ids)
+    // Si viene undefined o vacío, el motor usa el factor automático (Modo A/B)
+    work_splits?: number[]
   }[]
   payments: {
     payment_method: PaymentMethod; amount: number; reference?: string
@@ -173,6 +177,13 @@ export interface CreateInvoicePayload {
 }
 
 // ── Comisiones ────────────────────────────────────────────────────────────────
+export type CommissionMode = 'simple' | 'proportional' | 'manual'
+
+export interface CommissionSettings {
+  commission_mode: CommissionMode
+  overhead_pct:    number
+}
+
 export type CommissionRunStatus = 'preview' | 'confirmed'
 
 export interface CommissionRun {
