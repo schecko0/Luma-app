@@ -211,6 +211,28 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
   const handleWaConnect = async () => {
     setWaConnecting(true); setWaQr(null)
     await window.electronAPI.whatsapp.connect()
+
+    // Polling de respaldo: por si el evento push llega antes que el listener
+    const poll = setInterval(async () => {
+      const res = await window.electronAPI.whatsapp.getStatus()
+      if (res.ok && res.data.status === 'ready') {
+        setWaStatus('ready')
+        setWaPhone(res.data.phone)
+        setWaQr(null)
+        setWaConnecting(false)
+        clearInterval(poll)
+      }
+      if (res.ok && res.data.status === 'error') {
+        setWaConnecting(false)
+        clearInterval(poll)
+      }
+    }, 2000)
+
+    // Timeout de seguridad: máximo 2 minutos esperando
+    setTimeout(() => {
+      clearInterval(poll)
+      setWaConnecting(false)
+    }, 120_000)
   }
 
   const handleWaDisconnect = async () => {
