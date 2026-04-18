@@ -566,7 +566,11 @@ export function initWhatsAppClient(): Promise<void> {
     })
 
     waClient.on('authenticated', () => {
-      logger.info('[WA] Autenticado correctamente')
+      logger.info('[WA] Autenticado correctamente — esperando evento ready...')
+    })
+
+    waClient.on('loading_screen', (percent, message) => {
+      logger.info(`[WA] Cargando WhatsApp Web: ${percent}% — ${message}`)
     })
 
     waClient.on('auth_failure', (msg) => {
