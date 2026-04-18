@@ -22,14 +22,14 @@ export function registerWhatsAppHandlers(ipcMain: IpcMain) {
   })
 
   // ── Iniciar conexión (muestra QR vía push event) ──────────────────────
-  ipcMain.handle('whatsapp:connect', async () => {
-    try {
-      await initWhatsAppClient()
-      return { ok: true }
-    } catch (err: any) {
-      logger.error('[IPC] whatsapp:connect error', err)
-      return { ok: false, error: err.message ?? String(err) }
-    }
+  ipcMain.handle('whatsapp:connect', () => {
+    // NO hacer await — iniciar en background y responder inmediato
+    // La UI se entera del progreso vía push events (whatsapp:status, whatsapp:qr)
+    logger.info('[IPC] whatsapp:connect — iniciando en background')
+    initWhatsAppClient().catch(err => {
+      logger.error('[IPC] whatsapp:connect error en background:', err.message ?? String(err))
+    })
+    return { ok: true }
   })
 
   // ── Desconectar y borrar sesión ───────────────────────────────────────
