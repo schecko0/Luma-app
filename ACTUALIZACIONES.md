@@ -42,8 +42,8 @@ Cuando quieras lanzar una actualización, los pasos son:
     git add .
     git commit -m "feat: ocultar menu bar en produccion"
     git push origin main
-    git tag v1.0.5
-    git push origin v1.0.5
+    git tag v1.0.16
+    git push origin v1.0.16
    ```
 3. **Automatización**: GitHub Actions detectará el tag, compilará la app y creará un "Draft Release" en GitHub.
 4. **Publicar**: Entras a GitHub, revisas que los archivos estén ahí y le das a "Publish Release".

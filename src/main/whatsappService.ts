@@ -475,7 +475,6 @@ export function startWhatsAppScheduler() {
 async function performFullWACleanup(reason?: string) {
   if (waClient) {
     try {
-      // Intentamos cerrar formalmente, pero no bloqueamos si falla
       await waClient.logout().catch(() => {})
       await waClient.destroy().catch(() => {})
     } catch (e) {
@@ -491,6 +490,18 @@ async function performFullWACleanup(reason?: string) {
 
   waStatus = 'disconnected'
   waPhone  = null
+
+  // Limpiar carpeta de sesión para evitar sesiones corruptas en reconexiones
+  try {
+    const sessionPath = path.join(app.getPath('userData'), '.wwebjs_auth')
+    const fs = await import('fs')
+    if (fs.existsSync(sessionPath)) {
+      fs.rmSync(sessionPath, { recursive: true, force: true })
+      logger.info('[WA] Carpeta de sesión eliminada correctamente.')
+    }
+  } catch (e) {
+    logger.error('[WA] No se pudo eliminar carpeta de sesión:', e)
+  }
 
   // Limpiar base de datos para que la UI refleje el estado real
   const db = getDb(); const now = nowISO()
@@ -520,6 +531,11 @@ export function initWhatsAppClient(): Promise<void> {
 
     waClient = new Client({
       authStrategy: new LocalAuth({ dataPath: sessionPath }),
+      webVersion: '2.3000.1015901745',
+      webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901745.html',
+      },
       puppeteer: {
         headless: true,
         args: [
@@ -533,13 +549,7 @@ export function initWhatsAppClient(): Promise<void> {
           '--disable-background-networking',
           '--disable-default-apps',
           '--disable-sync',
-          '--no-zygote',
-          '--single-process',
         ],
-      },
-      webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
       },
     })
 
