@@ -22,6 +22,11 @@ const api = {
 
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // ── Window controls (Windows) ─────────────────────────────────
+  minimizeWindow: () => ipcRenderer.send('window:minimize'),
+  maximizeWindow: () => ipcRenderer.send('window:maximize'),
+  closeWindow:    () => ipcRenderer.send('window:close'),
+
   onUpdateAvailable: (cb: (info: any) => void) => {
     const wrapped = (_e: any, info: any) => cb(info)
     ipcRenderer.on('update-available', wrapped)

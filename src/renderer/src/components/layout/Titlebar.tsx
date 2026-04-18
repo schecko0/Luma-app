@@ -19,21 +19,21 @@ export const Titlebar: React.FC = () => {
       {/* Botones de ventana — Windows style */}
       <div className="titlebar-no-drag flex items-center gap-1">
         <button
-          onClick={() => window.electronAPI /* TODO: minimize */}
+          onClick={() => window.electronAPI?.minimizeWindow()}
           className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
           style={{ color: 'var(--color-text-muted)' }}
         >
           <Minus size={12} />
         </button>
         <button
-          onClick={() => window.electronAPI /* TODO: maximize */}
+          onClick={() => window.electronAPI?.maximizeWindow()}
           className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
           style={{ color: 'var(--color-text-muted)' }}
         >
           <Square size={11} />
         </button>
         <button
-          onClick={() => window.electronAPI /* TODO: close */}
+          onClick={() => window.electronAPI?.closeWindow()}
           className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500 transition-colors"
           style={{ color: 'var(--color-text-muted)' }}
         >

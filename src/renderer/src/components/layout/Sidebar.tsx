@@ -139,13 +139,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin, collapsed, onToggle, 
             {updateReady ? (
               <button
                 onClick={() => window.electronAPI?.installUpdate()}
-                className="w-full text-xs py-1 px-2 rounded-lg font-medium transition-all"
+                className="w-full flex items-center justify-center gap-1.5 text-xs py-1.5 px-2 rounded-lg font-medium transition-all hover:opacity-90 active:scale-95"
                 style={{ background: 'var(--color-accent)', color: '#fff' }}
               >
-                <DownloadCloud size={13} className="mr-1" /> Actualizar ahora
+                <DownloadCloud size={13} />
+                <span>Actualizar ahora</span>
               </button>
             ) : (
-              <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+              <p className="text-[10px] px-1" style={{ color: 'var(--color-text-muted)' }}>
                 v{version}
               </p>
             )}

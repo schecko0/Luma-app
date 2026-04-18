@@ -647,10 +647,10 @@ function applyMigration6() {
         ('wa_send_hour',         '9'),
         ('wa_template_1d',       'Hola {nombre}, te recordamos tu cita en {salon} mañana a las {hora} con {empleado} para {servicio}. ¿Confirmas tu asistencia? Responde SI o NO.'),
         ('wa_template_3d',       'Hola {nombre}, tu cita en {salon} es el {fecha} a las {hora}. Si necesitas cancelar o reagendar, aún hay tiempo. Responde NO para liberar tu espacio.'),
-        ('wa_template_7d',       'Hola {nombre}, te recordamos tu cita el {fecha} a las {hora} en {salon}. Cualquier cambio avísanos con tiempo. ¡Te esperamos!')
+        ('wa_template_7d',       'Hola {nombre}, te recordamos tu cita el {fecha} a las {hora} en {salon}. Cualquier cambio avísanos con tiempo. ¡Te esperamos!'),
         ('wa_confirm_on_create',  'false'),
         ('wa_template_confirm',   '¡Hola {nombre}! ✅ Tu cita en {salon} ha sido confirmada.\n\n📅 {fecha}\n🕐 {hora}\n✂️ {servicio}\n👤 {empleado}\n\n¡Te esperamos!'),
-        ('wa_logo_path',          '');
+        ('wa_logo_path',          '')
         `)
   })
   migrate()

@@ -19,25 +19,17 @@ autoUpdater.setFeedURL({
   releaseType: 'release',
 })
 
-autoUpdater.on('checking-for-update', () => {
-  logger.info('[AutoUpdater] Buscando actualizaciones...')
-})
-
 autoUpdater.on('update-available', (info) => {
-  logger.info('[AutoUpdater] ¡Update disponible!', JSON.stringify(info))
+  logger.info('[AutoUpdater] ¡Update disponible! v' + info.version)
   mainWindow?.webContents.send('update-available', info)
 })
 
-autoUpdater.on('update-not-available', (info) => {
-  logger.info('[AutoUpdater] Sin actualizaciones. Versión actual:', JSON.stringify(info))
-})
-
-autoUpdater.on('download-progress', (progress) => {
-  logger.info(`[AutoUpdater] Descargando... ${Math.round(progress.percent)}% (${Math.round(progress.transferred / 1024 / 1024)}MB / ${Math.round(progress.total / 1024 / 1024)}MB)`)
+autoUpdater.on('update-not-available', () => {
+  logger.info('[AutoUpdater] La app está al día.')
 })
 
 autoUpdater.on('update-downloaded', (info) => {
-  logger.info('[AutoUpdater] ¡Descarga completa! Lista para instalar:', JSON.stringify(info))
+  logger.info('[AutoUpdater] Descarga completa, lista para instalar v' + info.version)
   mainWindow?.webContents.send('update-downloaded', info)
 })
 
@@ -69,6 +61,7 @@ async function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 680,
+    frame: process.platform === 'darwin',        // Mac usa frame nativo, Windows no
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#0f0d0b',
     webPreferences: {
@@ -131,6 +124,14 @@ app.whenReady().then(async () => {
   registerAllHandlers(ipcMain)
   // Exponer versión al renderer
   ipcMain.handle('get-app-version', () => app.getVersion())
+
+  // Controles de ventana (Windows)
+  ipcMain.on('window:minimize', () => mainWindow?.minimize())
+  ipcMain.on('window:maximize', () => {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+    else mainWindow?.maximize()
+  })
+  ipcMain.on('window:close', () => mainWindow?.close())
 
   // Instalar update cuando el usuario lo confirme
   ipcMain.on('install-update', () => {
