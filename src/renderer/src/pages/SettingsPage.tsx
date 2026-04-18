@@ -86,6 +86,7 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
     wa_template_1d: '', wa_template_3d: '', wa_template_7d: '',
     wa_confirm_on_create: 'false',wa_template_confirm:  '',wa_logo_path:'',
   })
+  const [showWaDisconnectConfirm, setShowWaDisconnectConfirm] = useState(false)
   const [waLogoPreview, setWaLogoPreview] = useState<string | null>(null)
   const [waLogoFullscreen, setWaLogoFullscreen] = useState(false)
 
@@ -238,6 +239,7 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
   const handleWaDisconnect = async () => {
     await window.electronAPI.whatsapp.disconnect()
     setWaStatus('disconnected'); setWaPhone(null); setWaQr(null)
+    setShowWaDisconnectConfirm(false)
   }
 
   const saveWaSettings = async () => {
@@ -671,7 +673,7 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
                     </p>
                   </div>
                   {waStatus === 'ready'
-                    ? <button onClick={handleWaDisconnect} className="luma-btn-ghost text-xs"
+                    ? <button onClick={() => setShowWaDisconnectConfirm(true)} className="luma-btn-ghost text-xs"
                               style={{ color: 'var(--color-danger)' }}>Desvincular</button>
                     : <button onClick={handleWaConnect} disabled={waConnecting} className="luma-btn-primary text-xs">
                         {waConnecting ? <><Loader2 size={12} className="animate-spin" /> Iniciando...</>

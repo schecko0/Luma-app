@@ -93,7 +93,7 @@ export const AgendaPage: React.FC = () => {
   const [modalOpen, setModalOpen]   = useState(false)
   const [editingApt, setEditingApt] = useState<Appointment | null>(null)
   const [defaultStart, setDefStart] = useState<string | undefined>()
-  const [cancelConfirm, setCancelConfirm] = useState<{ onConfirm: () => void } | null>(null)
+  const [cancelConfirm, setCancelConfirm] = useState<{ onConfirm: () => void; type: 'cancel-apt' | 'disconnect-gc' } | null>(null)
   const [pastDateConfirm, setPastDateConfirm] = useState<string | null>(null)
   const [alertsEnabled, setAlerts]  = useState(true)
   const alertedIds                  = useRef<Set<number>>(new Set())
@@ -308,7 +308,7 @@ export const AgendaPage: React.FC = () => {
       <ConnectionBanner
         status={gcStatus} connecting={connecting} syncing={syncing} disconnecting={disconnecting}
         onConnect={handleConnect} onSync={handleSync}
-        onDisconnect={() => setCancelConfirm({ onConfirm: handleDisconnect })}
+        onDisconnect={() => setCancelConfirm({ onConfirm: handleDisconnect, type: 'disconnect-gc' })}
         onRefresh={loadAll}
       />
 
@@ -344,22 +344,24 @@ export const AgendaPage: React.FC = () => {
         isOpen={modalOpen} initial={editingApt}
         defaultStart={defaultStart} employees={employees}
         onClose={() => setModalOpen(false)} onSaved={loadAll}
-        onConfirmCancel={onConfirm => setCancelConfirm({ onConfirm })}
+        onConfirmCancel={onConfirm => setCancelConfirm({ onConfirm, type: 'cancel-apt' })}
       />
 
       <Modal isOpen={!!cancelConfirm} onClose={() => setCancelConfirm(null)}
-        title="¿Confirmar acción?" width="sm">
+        title={cancelConfirm?.type === 'disconnect-gc' ? '¿Desconectar Google Calendar?' : '¿Cancelar esta cita?'} width="sm">
         <div className="flex flex-col gap-4">
           <div className="rounded-lg px-4 py-3 text-sm"
                style={{ background: 'color-mix(in srgb,var(--color-danger) 12%,transparent)', color: 'var(--color-danger)' }}>
-            Esta acción no se puede deshacer. La cita quedará cancelada en Luma
-            {gcStatus.connected ? ' y se eliminará de Google Calendar.' : '.'}
+            {cancelConfirm?.type === 'disconnect-gc'
+              ? 'Se desconectará tu cuenta de Google Calendar. Las citas ya sincronizadas no se eliminarán, pero dejarán de sincronizarse.'
+              : `Esta acción no se puede deshacer. La cita quedará cancelada en Luma${gcStatus.connected ? ' y se eliminará de Google Calendar.' : '.'}`
+            }
           </div>
           <div className="flex justify-end gap-2">
             <button onClick={() => setCancelConfirm(null)} className="luma-btn-ghost">Volver</button>
             <button onClick={() => { cancelConfirm?.onConfirm(); setCancelConfirm(null) }}
               className="luma-btn text-white text-sm" style={{ background: 'var(--color-danger)' }}>
-              Confirmar cancelación
+              {cancelConfirm?.type === 'disconnect-gc' ? 'Sí, desconectar' : 'Confirmar cancelación'}
             </button>
           </div>
         </div>

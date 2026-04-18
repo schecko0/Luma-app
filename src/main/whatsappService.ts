@@ -45,9 +45,7 @@ function getSalonName(): string {
 // Notificar a la UI (renderer) sobre cambios de estado
 // ─────────────────────────────────────────────────────────────────────────────
 function notifyRenderer(event: string, data?: unknown) {
-  const windows = BrowserWindow.getAllWindows()
-  logger.info(`[WA] notifyRenderer '${event}' → ${windows.length} ventana(s)`)
-  windows.forEach(win => {
+  BrowserWindow.getAllWindows().forEach(win => {
     if (!win.isDestroyed()) win.webContents.send(event, data)
   })
 }
@@ -561,22 +559,17 @@ export function initWhatsAppClient(): Promise<void> {
     })
 
     waClient.on('ready', async () => {
-      logger.info('[WA] Evento ready disparado, actualizando estado...')
       waStatus = 'ready'
       try {
         const info  = waClient!.info
         waPhone     = info?.wid?.user ?? null
         const phone = waPhone ? `+${waPhone}` : null
-        logger.info(`[WA] Info obtenida. Phone: ${phone}`)
-        // Guardar en settings para mostrarlo en UI
         const db = getDb(); const now = nowISO()
         db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_phone', ?, ?)")
           .run(phone ?? '', now)
         db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_enabled', 'true', ?)")
           .run(now)
-        logger.info('[WA] Settings guardados, notificando renderer...')
         notifyRenderer('whatsapp:status', { status: 'ready', phone })
-        logger.info('[WA] Renderer notificado. Iniciando scheduler...')
         startWhatsAppScheduler()
         logger.info(`[WA] Listo. Número: ${phone}`)
       } catch (err) {
@@ -586,12 +579,9 @@ export function initWhatsAppClient(): Promise<void> {
     })
 
     waClient.on('authenticated', () => {
-      logger.info('[WA] Autenticado correctamente — esperando evento ready...')
+      logger.info('[WA] Autenticado correctamente')
     })
 
-    waClient.on('loading_screen', (percent, message) => {
-      logger.info(`[WA] Cargando WhatsApp Web: ${percent}% — ${message}`)
-    })
 
     waClient.on('auth_failure', (msg) => {
       logger.error('[WA] Fallo de autenticación:', msg)
