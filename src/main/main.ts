@@ -9,7 +9,8 @@ import { initWhatsAppClient } from './whatsappService'
 
 // Configuración de logs para el updater
 autoUpdater.logger = logger
-autoUpdater.autoDownload = true
+// En Mac no descargamos automaticamente por falta de firma de codigo
+autoUpdater.autoDownload = process.platform !== 'darwin'
 
 // Forzar uso de GitHub API REST en lugar del feed HTML (evita error 406)
 autoUpdater.setFeedURL({
@@ -21,7 +22,12 @@ autoUpdater.setFeedURL({
 
 autoUpdater.on('update-available', (info) => {
   logger.info('[AutoUpdater] ¡Update disponible! v' + info.version)
-  mainWindow?.webContents.send('update-available', info)
+  // En Mac no podemos instalar automaticamente por falta de firma
+  // Enviamos un flag para que el renderer muestre el flujo informativo
+  mainWindow?.webContents.send('update-available', {
+    ...info,
+    manualInstall: process.platform === 'darwin'
+  })
 })
 
 autoUpdater.on('update-not-available', () => {

@@ -1440,6 +1440,24 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         </div>
       </Modal>
 
+      {/* Modal: Desvincular WhatsApp */}
+      <Modal isOpen={showWaDisconnectConfirm} onClose={() => setShowWaDisconnectConfirm(false)}
+        title="¿Desvincular WhatsApp?" width="sm">
+        <div className="flex flex-col gap-4">
+          <div className="rounded-lg px-4 py-3 text-sm"
+               style={{ background: 'color-mix(in srgb,var(--color-danger) 12%,transparent)', color: 'var(--color-danger)' }}>
+            Se cerrará la sesión de WhatsApp y se eliminará la sesión guardada. Los recordatorios automáticos se detendrán hasta que vuelvas a vincular.
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setShowWaDisconnectConfirm(false)} className="luma-btn-ghost">Cancelar</button>
+            <button onClick={handleWaDisconnect}
+              className="luma-btn text-white text-sm" style={{ background: 'var(--color-danger)' }}>
+              Sí, desvincular
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Modal: Confirmar restaurar cita */}
       <Modal isOpen={!!restoreConfirm} onClose={() => setRestoreConfirm(null)}
         title="¿Restaurar esta cita?" width="sm">

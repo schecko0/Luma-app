@@ -411,6 +411,11 @@ const SettingsGuide = () => (
       los recordatorios automaticos (1, 3 y 7 dias antes), las plantillas de mensaje y la pausa entre envios
       (minimo 12 segundos recomendado para evitar bloqueos).
     </p>
+    <CalloutBox icon={<Smartphone size={16} />} variant="info" title="Requisito en Mac: Google Chrome">
+      En Mac, la integracion de WhatsApp requiere que Google Chrome este instalado en el sistema
+      (en /Applications/Google Chrome.app). Sin Chrome, el QR no podra generarse.
+      En Windows esto no es necesario.
+    </CalloutBox>
 
     <SectionTitle>Pestana: Sistema</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
