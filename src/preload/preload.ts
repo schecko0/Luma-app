@@ -27,6 +27,12 @@ const api = {
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow:    () => ipcRenderer.send('window:close'),
 
+  // Papelera de citas
+  listCancelledAppointments: (page: number, pageSize: number) =>
+    ipcRenderer.invoke('calendar:listCancelled', page, pageSize),
+  restoreAppointment: (cancelledId: number) =>
+    ipcRenderer.invoke('calendar:restoreAppointment', cancelledId),
+
   onUpdateAvailable: (cb: (info: any) => void) => {
     const wrapped = (_e: any, info: any) => cb(info)
     ipcRenderer.on('update-available', wrapped)

@@ -650,36 +650,127 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
   })
 
   // ── Cancelar cita ─────────────────────────────────────────────────────
-  ipcMain.handle('calendar:cancelAppointment', async (_e, id: number) => {
+  ipcMain.handle('calendar:cancelAppointment', async (_e, id: number, reason?: string) => {
     try {
       const db  = getDb()
-      const cur = db.prepare('SELECT * FROM appointments WHERE id=?').get(id) as Appointment | undefined
+      const cur = db.prepare(`
+        SELECT a.*,
+          (e.first_name || ' ' || e.last_name) AS employee_name,
+          (c.first_name || ' ' || c.last_name) AS client_name,
+          c.phone AS client_phone,
+          s.name  AS service_name
+        FROM appointments a
+        LEFT JOIN employees e ON e.id = a.employee_id
+        LEFT JOIN clients   c ON c.id = a.client_id
+        LEFT JOIN services  s ON s.id = a.service_id
+        WHERE a.id = ?
+      `).get(id) as (Appointment & {
+        employee_name?: string; client_name?: string
+        client_phone?: string;  service_name?: string
+      }) | undefined
       if (!cur) return { ok: false, error: 'Cita no encontrada.' }
 
       const now = nowISO()
+
+      // 1️⃣ Snapshot en papelera ANTES de cancelar
+      db.prepare(`
+        INSERT INTO cancelled_appointments (
+          appointment_id,
+          snapshot_title, snapshot_start_at, snapshot_end_at,
+          snapshot_description, snapshot_color, snapshot_all_day,
+          snapshot_google_event_id,
+          employee_id, employee_name,
+          client_id,   client_name, client_phone,
+          service_id,  service_name,
+          cancelled_from, cancel_reason, cancelled_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'agenda',?,?)
+      `).run(
+        id,
+        cur.title, cur.start_at, cur.end_at,
+        cur.description ?? null, cur.color ?? null, cur.all_day ? 1 : 0,
+        cur.google_event_id ?? null,
+        cur.employee_id ?? null, (cur as any).employee_name ?? null,
+        cur.client_id   ?? null, (cur as any).client_name  ?? null, (cur as any).client_phone ?? null,
+        cur.service_id  ?? null, (cur as any).service_name ?? null,
+        reason ?? null, now
+      )
+
+      // 2️⃣ Marcar cancelada
       db.prepare('UPDATE appointments SET sync_status=?,updated_at=? WHERE id=?').run('cancelled', now, id)
 
+      // 3️⃣ Encolar eliminación en Google si aplica
       if (cur.google_event_id) {
-        // CORREGIDO: 5 signos de interrogación para 5 valores
         db.prepare(`
           INSERT INTO google_sync_queue (appointment_id, operation, payload, created_at, next_retry_at)
           VALUES (?, ?, ?, ?, ?)
         `).run(id, 'delete', JSON.stringify({ google_event_id: cur.google_event_id }), now, now)
-        
-        setTimeout(() => {
-          processSyncQueue().catch(() => {})
-        }, 1500)
+        setTimeout(() => processSyncQueue().catch(() => {}), 1500)
       }
 
-      // Notificar a la UI
-      BrowserWindow.getAllWindows().forEach(win => {
-        win.webContents.send('calendar:updated')
-      })
-
+      BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
       return { ok: true }
     } catch (e: any) { 
       logger.error('Error en cancelAppointment', e)
       return { ok: false, error: String(e).replace('Error: ', '') } 
+    }
+  })
+
+  // ── Papelera: listar citas canceladas ────────────────────────────────
+  ipcMain.handle('calendar:listCancelled', (_e, page = 1, pageSize = 20) => {
+    try {
+      const db     = getDb()
+      const offset = (page - 1) * pageSize
+      const rows   = db.prepare(`
+        SELECT * FROM cancelled_appointments
+        WHERE is_restored = 0
+        ORDER BY cancelled_at DESC
+        LIMIT ? OFFSET ?
+      `).all(pageSize, offset)
+      const total  = (db.prepare('SELECT COUNT(*) as n FROM cancelled_appointments WHERE is_restored = 0').get() as { n: number }).n
+      return { ok: true, data: { rows, total } }
+    } catch (e: any) { return { ok: false, error: String(e) } }
+  })
+
+  // ── Papelera: restaurar una cita cancelada ────────────────────────────
+  ipcMain.handle('calendar:restoreAppointment', async (_e, cancelledId: number) => {
+    try {
+      const db  = getDb()
+      const rec = db.prepare('SELECT * FROM cancelled_appointments WHERE id = ?').get(cancelledId) as any
+      if (!rec) return { ok: false, error: 'Registro no encontrado en la papelera.' }
+      if (rec.is_restored) return { ok: false, error: 'Esta cita ya fue restaurada.' }
+
+      const now = nowISO()
+      const result = db.prepare(`
+        INSERT INTO appointments
+          (employee_id, client_id, service_id, title, description,
+           start_at, end_at, all_day, color, sync_status, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,'local',?,?)
+      `).run(
+        rec.employee_id ?? null, rec.client_id ?? null, rec.service_id ?? null,
+        rec.snapshot_title, rec.snapshot_description ?? null,
+        rec.snapshot_start_at, rec.snapshot_end_at,
+        rec.snapshot_all_day ?? 0, rec.snapshot_color ?? null,
+        now, now
+      )
+      const newId = result.lastInsertRowid as number
+
+      db.prepare(`
+        UPDATE cancelled_appointments
+        SET is_restored = 1, restored_at = ?, restored_appointment_id = ?
+        WHERE id = ?
+      `).run(now, newId, cancelledId)
+
+      db.prepare(`
+        INSERT INTO google_sync_queue (appointment_id, operation, created_at, next_retry_at)
+        VALUES (?, 'create', ?, ?)
+      `).run(newId, now, now)
+      setTimeout(() => processSyncQueue().catch(() => {}), 1500)
+
+      BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
+      return { ok: true, data: { newAppointmentId: newId } }
+    } catch (e: any) {
+      logger.error('Error en restoreAppointment', e)
+      return { ok: false, error: String(e).replace('Error: ', '') }
     }
   })
 

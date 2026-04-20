@@ -527,6 +527,35 @@ export function initWhatsAppClient(): Promise<void> {
 
     const sessionPath = path.join(app.getPath('userData'), '.wwebjs_auth')
 
+    // Resolver el ejecutable de Chromium segun la plataforma
+    // En produccion los binarios estan en app.asar.unpacked (asarUnpack)
+    const getChromiumPath = (): string | undefined => {
+      if (!app.isPackaged) return undefined
+
+      if (process.platform === 'darwin') {
+        const arch   = process.arch === 'arm64' ? 'arm64' : 'x64'
+        const base   = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules')
+        // Intentar puppeteer-core primero, luego puppeteer
+        const candidates = [
+          path.join(base, 'puppeteer-core', '.local-chromium', `mac_arm-${arch}`, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+          path.join(base, 'puppeteer',      '.local-chromium', `mac_arm-${arch}`, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+          path.join(base, 'puppeteer-core', '.local-chromium', `mac-${arch}`,     'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+        ]
+        const fs = require('fs')
+        for (const c of candidates) {
+          if (fs.existsSync(c)) {
+            logger.info(`[WA] Chromium encontrado en: ${c}`)
+            return c
+          }
+        }
+        logger.error('[WA] No se encontro Chromium en ninguna ruta candidata:', candidates)
+      }
+
+      return undefined
+    }
+
+    const chromiumPath = getChromiumPath()
+
     waClient = new Client({
       authStrategy: new LocalAuth({ dataPath: sessionPath }),
       webVersion: '2.3000.1015901745',
@@ -536,6 +565,7 @@ export function initWhatsAppClient(): Promise<void> {
       },
       puppeteer: {
         headless: true,
+        executablePath: chromiumPath,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',

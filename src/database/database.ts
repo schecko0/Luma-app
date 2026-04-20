@@ -57,7 +57,7 @@ function runMigrations() {
   if (current < 6) applyMigration6()   // ← WhatsApp reminder log + settings
   if (current < 7) applyMigration7()   // ← commission_run_id en invoice_service_employees
   if (current < 8) applyMigration8()   // ← Motor de comisiones: modo + overhead
-  if (current < 9) applyMigration9()   // ← Guardar modo de comisión en cada factura
+  if (current < 10) applyMigration10()  // ← Papelera de citas + auditoría de cancelaciones
 }
 
 function getCurrentVersion(): number {
@@ -607,6 +607,68 @@ function applyMigration9() {
   migrate()
   setVersion(9)
   log('Migración 9 completada.')
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 10 — Papelera de citas + auditoría de cancelaciones
+// ───────────────────────────────────────────────────────────────────────────────
+function applyMigration10() {
+  log('Aplicando migración 10: papelera de citas + auditoría...')
+  const migrate = db.transaction(() => {
+    db.exec(`
+      -- Papelera: copia completa de cada cita cancelada
+      -- Permite auditoría (quién canceló, cuándo, desde dónde)
+      -- y restauración completa del registro original
+      CREATE TABLE IF NOT EXISTS cancelled_appointments (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        -- Referencia a la cita original (puede haber sido modificada en appointments)
+        appointment_id      INTEGER NOT NULL REFERENCES appointments(id),
+
+        -- Snapshot completo de la cita al momento de cancelar
+        snapshot_title      TEXT    NOT NULL,
+        snapshot_start_at   TEXT    NOT NULL,
+        snapshot_end_at     TEXT    NOT NULL,
+        snapshot_description TEXT,
+        snapshot_color      TEXT,
+        snapshot_all_day    INTEGER NOT NULL DEFAULT 0,
+        snapshot_google_event_id TEXT,
+
+        -- Relaciones (guardamos también los nombres para no depender de joins)
+        employee_id         INTEGER REFERENCES employees(id),
+        employee_name       TEXT,
+        client_id           INTEGER REFERENCES clients(id),
+        client_name         TEXT,
+        client_phone        TEXT,
+        service_id          INTEGER REFERENCES services(id),
+        service_name        TEXT,
+
+        -- Auditoría de la cancelación
+        cancelled_by_user   INTEGER REFERENCES users(id),
+        cancelled_from      TEXT    NOT NULL DEFAULT 'app'
+                              CHECK(cancelled_from IN ('app', 'agenda', 'settings', 'api')),
+        cancel_reason       TEXT,
+        cancelled_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+
+        -- Estado de la papelera
+        is_restored         INTEGER NOT NULL DEFAULT 0,
+        restored_at         TEXT,
+        restored_appointment_id INTEGER REFERENCES appointments(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cancelled_apts_date
+        ON cancelled_appointments(cancelled_at);
+      CREATE INDEX IF NOT EXISTS idx_cancelled_apts_client
+        ON cancelled_appointments(client_id);
+      CREATE INDEX IF NOT EXISTS idx_cancelled_apts_employee
+        ON cancelled_appointments(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_cancelled_apts_restored
+        ON cancelled_appointments(is_restored);
+    `)
+  })
+  migrate()
+  setVersion(10)
+  log('Migración 10 completada.')
 }
 
 function applyMigration6() {

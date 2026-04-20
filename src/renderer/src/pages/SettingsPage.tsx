@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronUp, Eye, EyeOff, ShieldCheck,
   Database, Download, Upload, FileText, History, Terminal,
   AlertTriangle, Trash2, Info, Activity, MessageCircle, Wifi, WifiOff, Send, Clock, ToggleLeft, ToggleRight,
-  Percent, Users,
+  Percent, Users, RotateCcw,
 } from 'lucide-react'
 
 import { PageHeader, Spinner, Paginator, Badge } from '../components/ui/index'
@@ -47,7 +47,7 @@ const DEFAULTS: SettingsForm = {
 
 const CURRENCIES = ['MXN', 'USD', 'EUR', 'COP', 'ARS', 'CLP', 'PEN']
 
-type TabId = 'general' | 'appearance' | 'google' | 'whatsapp' | 'commissions' | 'system'
+type TabId = 'general' | 'appearance' | 'google' | 'whatsapp' | 'commissions' | 'system' | 'trash'
 
 export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
   const [activeTab, setActiveTab] = useState<TabId>('general')
@@ -89,6 +89,14 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
   const [showWaDisconnectConfirm, setShowWaDisconnectConfirm] = useState(false)
   const [waLogoPreview, setWaLogoPreview] = useState<string | null>(null)
   const [waLogoFullscreen, setWaLogoFullscreen] = useState(false)
+
+  // ── Estados Papelera ──────────────────────────────────────────────────────
+  const [trashRows, setTrashRows]       = useState<any[]>([])
+  const [trashTotal, setTrashTotal]     = useState(0)
+  const [trashPage, setTrashPage]       = useState(1)
+  const [trashLoading, setTrashLoading] = useState(false)
+  const [restoring, setRestoring]       = useState<number | null>(null)
+  const [restoreConfirm, setRestoreConfirm] = useState<any | null>(null)
 
 
   useEffect(() => {
@@ -137,10 +145,39 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
 
   // Cargar logs cuando se activa la pestaña de sistema
   useEffect(() => {
-    if (activeTab === 'system') {
-      loadErrorLogs(1)
-    }
+    if (activeTab === 'system') loadErrorLogs(1)
+    if (activeTab === 'trash')  loadTrash(1)
   }, [activeTab])
+
+  const loadTrash = async (page: number) => {
+    setTrashLoading(true)
+    try {
+      const res = await (window.electronAPI as any).listCancelledAppointments(page, 15)
+      if (res.ok) {
+        setTrashRows(res.data.rows)
+        setTrashTotal(res.data.total)
+        setTrashPage(page)
+      }
+    } finally {
+      setTrashLoading(false)
+    }
+  }
+
+  const handleRestore = async (row: any) => {
+    setRestoring(row.id)
+    try {
+      const res = await (window.electronAPI as any).restoreAppointment(row.id)
+      if (res.ok) {
+        setRestoreConfirm(null)
+        loadTrash(trashPage)
+        setSuccessMsg({ title: 'Cita restaurada', body: `La cita "${row.snapshot_title}" fue restaurada exitosamente y aparece nuevamente en la Agenda.` })
+      } else {
+        setError(res.error ?? 'Error al restaurar')
+      }
+    } finally {
+      setRestoring(null)
+    }
+  }
 
   useEffect(() => {
     if (activeTab !== 'whatsapp') return
@@ -373,6 +410,7 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
     { id: 'commissions', label: 'Comisiones',  icon: <Percent size={14} /> },
     { id: 'system',      label: 'Sistema',     icon: <Terminal size={14} /> },
     { id: 'whatsapp',    label: 'WhatsApp',    icon: <MessageCircle size={14} /> },
+    { id: 'trash',       label: 'Papelera',    icon: <Trash2 size={14} /> },
   ]
 
   return (
@@ -1163,6 +1201,78 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
             </>
           )}
 
+          {/* ── Tab: Papelera ───────────────────────────────────────────────────── */}
+          {activeTab === 'trash' && (
+            <Section title="Papelera de citas" icon={<Trash2 size={16} />}>
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                Historial de citas canceladas. Puedes restaurar cualquiera —
+                se creará como nueva cita en la Agenda con todos sus datos originales.
+              </p>
+
+              <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--color-border)' }}>
+                <table className="w-full text-left text-xs">
+                  <thead style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Cita</th>
+                      <th className="px-3 py-2 font-semibold w-28">Cliente</th>
+                      <th className="px-3 py-2 font-semibold w-28">Empleado</th>
+                      <th className="px-3 py-2 font-semibold w-32">Cancelada</th>
+                      <th className="px-3 py-2 w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody style={{ color: 'var(--color-text)' }}>
+                    {trashLoading ? (
+                      <tr><td colSpan={5} className="px-3 py-8 text-center"><Spinner size={16} /></td></tr>
+                    ) : trashRows.length === 0 ? (
+                      <tr><td colSpan={5} className="px-3 py-8 text-center"
+                              style={{ color: 'var(--color-text-muted)' }}>
+                        No hay citas canceladas.
+                      </td></tr>
+                    ) : trashRows.map(row => (
+                      <tr key={row.id} className="border-t" style={{ borderColor: 'var(--color-border)' }}>
+                        <td className="px-3 py-2">
+                          <p className="font-medium truncate max-w-[140px]">{row.snapshot_title}</p>
+                          <p className="text-[10px] font-mono" style={{ color: 'var(--color-text-muted)' }}>
+                            {new Date(row.snapshot_start_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short', hour12: true })}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2">
+                          <p className="truncate max-w-[100px]">{row.client_name ?? '—'}</p>
+                          {row.client_phone && (
+                            <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{row.client_phone}</p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 truncate max-w-[100px]">{row.employee_name ?? '—'}</td>
+                        <td className="px-3 py-2 text-[10px] font-mono whitespace-nowrap"
+                            style={{ color: 'var(--color-text-muted)' }}>
+                          {new Date(row.cancelled_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short', hour12: true })}
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            onClick={() => setRestoreConfirm(row)}
+                            disabled={restoring === row.id}
+                            className="luma-btn-ghost p-1"
+                            title="Restaurar cita"
+                            style={{ color: 'var(--color-success)' }}>
+                            {restoring === row.id
+                              ? <Loader2 size={13} className="animate-spin" />
+                              : <RotateCcw size={13} />}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {trashTotal > 15 && (
+                <Paginator page={trashPage} pageSize={15} total={trashTotal} onChange={loadTrash} />
+              )}
+            </Section>
+          )}
+
+          {/* Modal confirmación restaurar */}
+
           <div className="flex justify-end pb-4">
             <button onClick={handleSave} disabled={saving} className="luma-btn-primary px-8">
               {saving ? <><Loader2 size={15} className="animate-spin" /> Guardando...</>
@@ -1329,6 +1439,34 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
           </button>
         </div>
       </Modal>
+
+      {/* Modal: Confirmar restaurar cita */}
+      <Modal isOpen={!!restoreConfirm} onClose={() => setRestoreConfirm(null)}
+        title="¿Restaurar esta cita?" width="sm">
+        {restoreConfirm && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-lg px-4 py-3 text-sm"
+                 style={{ background: 'color-mix(in srgb,var(--color-success) 12%,transparent)', color: 'var(--color-success)' }}>
+              Se creará una nueva cita con los datos originales de <strong>{restoreConfirm.snapshot_title}</strong>
+              {restoreConfirm.client_name ? ` para ${restoreConfirm.client_name}` : ''}.
+              Apareceá en la Agenda y se sincronizará con Google Calendar si está conectado.
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRestoreConfirm(null)} className="luma-btn-ghost">Cancelar</button>
+              <button
+                onClick={() => handleRestore(restoreConfirm)}
+                disabled={restoring === restoreConfirm.id}
+                className="luma-btn text-white text-sm"
+                style={{ background: 'var(--color-success)' }}>
+                {restoring === restoreConfirm.id
+                  ? <><Loader2 size={13} className="animate-spin" /> Restaurando...</>
+                  : <><RotateCcw size={13} /> Sí, restaurar</>}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Modal fullscreen del logo — ver imagen en pantalla completa */}
       <Modal
         isOpen={waLogoFullscreen}
