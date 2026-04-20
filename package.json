@@ -1,6 +1,6 @@
 {
   "name": "luma-app",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Sistema de gestión integral para salón de belleza",
   "main": "dist/main/main.js",
   "author": "Luma Salon",
@@ -66,9 +66,9 @@
       "node_modules/**/*"
     ],
     "asarUnpack": [
-      "node_modules/puppeteer-core/.local-chromium/**/*",
-      "node_modules/puppeteer/.local-chromium/**/*",
-      "node_modules/whatsapp-web.js/**/*"
+      "node_modules/puppeteer-core/**/*",
+      "node_modules/puppeteer/**/*",
+      "node_modules/whatsapp-web.js/node_modules/puppeteer-core/**/*"
     ],
     "win": {
       "target": "nsis"

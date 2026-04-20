@@ -515,8 +515,8 @@ async function performFullWACleanup(reason?: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CONEXIÓN: iniciar cliente WhatsApp y manejar eventos
 // ─────────────────────────────────────────────────────────────────────────────
-export function initWhatsAppClient(): Promise<void> {
-  return new Promise((resolve, reject) => {
+export async function initWhatsAppClient(): Promise<void> {
+  return new Promise(async (resolve, reject) => {
     if (waClient) {
       waClient.destroy().catch(() => {})
       waClient = null
@@ -528,33 +528,56 @@ export function initWhatsAppClient(): Promise<void> {
     const sessionPath = path.join(app.getPath('userData'), '.wwebjs_auth')
 
     // Resolver el ejecutable de Chromium segun la plataforma
-    // En produccion los binarios estan en app.asar.unpacked (asarUnpack)
-    const getChromiumPath = (): string | undefined => {
+    const getChromiumPath = async (): Promise<string | undefined> => {
       if (!app.isPackaged) return undefined
 
       if (process.platform === 'darwin') {
-        const arch   = process.arch === 'arm64' ? 'arm64' : 'x64'
-        const base   = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules')
-        // Intentar puppeteer-core primero, luego puppeteer
-        const candidates = [
-          path.join(base, 'puppeteer-core', '.local-chromium', `mac_arm-${arch}`, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-          path.join(base, 'puppeteer',      '.local-chromium', `mac_arm-${arch}`, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-          path.join(base, 'puppeteer-core', '.local-chromium', `mac-${arch}`,     'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-        ]
         const fs = require('fs')
-        for (const c of candidates) {
+
+        // 1. Buscar recursivamente en el unpacked
+        const unpackedBase = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules')
+        const searchChromium = (dir: string): string | null => {
+          if (!fs.existsSync(dir)) return null
+          try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true })
+            for (const entry of entries) {
+              const full = path.join(dir, entry.name)
+              if (entry.isFile() && (entry.name === 'Chromium' || entry.name === 'chrome')) {
+                logger.info(`[WA] Chromium encontrado: ${full}`)
+                return full
+              }
+              if (entry.isDirectory()) {
+                const found = searchChromium(full)
+                if (found) return found
+              }
+            }
+          } catch (_) {}
+          return null
+        }
+        const found = searchChromium(unpackedBase)
+        if (found) return found
+
+        // 2. Chrome del sistema como fallback
+        const systemCandidates = [
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          '/Applications/Chromium.app/Contents/MacOS/Chromium',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium',
+        ]
+        for (const c of systemCandidates) {
           if (fs.existsSync(c)) {
-            logger.info(`[WA] Chromium encontrado en: ${c}`)
+            logger.info(`[WA] Usando Chrome del sistema: ${c}`)
             return c
           }
         }
-        logger.error('[WA] No se encontro Chromium en ninguna ruta candidata:', candidates)
+
+        logger.error('[WA] No se encontro Chromium en el sistema ni en el paquete')
       }
 
       return undefined
     }
 
-    const chromiumPath = getChromiumPath()
+    const chromiumPath = await getChromiumPath()
 
     waClient = new Client({
       authStrategy: new LocalAuth({ dataPath: sessionPath }),
