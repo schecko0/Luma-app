@@ -48,6 +48,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Remove quarantine attributes (macOS)
+        run: find . -name '*.app' -exec xattr -cr {} \; 2>/dev/null || true
+
       - name: Build and Publish (macOS)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
