@@ -224,17 +224,7 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
     })
     loadWaLog(1)
 
-    // Escuchar push events del proceso principal
-    const unsubStatus = window.electronAPI.whatsapp.onStatus((data: any) => {
-      setWaStatus(data.status)
-      if (data.phone) setWaPhone(data.phone)
-      if (data.status === 'ready') { setWaQr(null); setWaConnecting(false) }
-      if (data.status === 'error') setWaConnecting(false)
-    })
-    const unsubQr = window.electronAPI.whatsapp.onQr((data: any) => {
-      setWaQr(data.qr); setWaStatus('qr')
-    })
-    return () => { unsubStatus(); unsubQr() }
+    return () => { }
   }, [activeTab])
 
   const loadWaLog = async (page: number) => {
@@ -250,7 +240,28 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
     setWaConnecting(true); setWaQr(null)
     await window.electronAPI.whatsapp.connect()
 
-    // Polling de respaldo: por si el evento push llega antes que el listener
+    // Activar listeners SOLO durante el proceso de conexion
+    const unsubQr = window.electronAPI.whatsapp.onQr((data: any) => {
+      setWaQr(data.qr); setWaStatus('qr')
+    })
+
+    const unsubStatus = window.electronAPI.whatsapp.onStatus((data: any) => {
+      setWaStatus(data.status)
+      if (data.phone) setWaPhone(data.phone)
+      if (data.status === 'ready') {
+        setWaQr(null)
+        setWaConnecting(false)
+        unsubQr()
+        unsubStatus()
+      }
+      if (data.status === 'error' || data.status === 'disconnected') {
+        setWaConnecting(false)
+        unsubQr()
+        unsubStatus()
+      }
+    })
+
+    // Polling de respaldo
     const poll = setInterval(async () => {
       const res = await window.electronAPI.whatsapp.getStatus()
       if (res.ok && res.data.status === 'ready') {
@@ -259,17 +270,23 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         setWaQr(null)
         setWaConnecting(false)
         clearInterval(poll)
+        unsubQr()
+        unsubStatus()
       }
       if (res.ok && res.data.status === 'error') {
         setWaConnecting(false)
         clearInterval(poll)
+        unsubQr()
+        unsubStatus()
       }
     }, 2000)
 
-    // Timeout de seguridad: máximo 2 minutos esperando
+    // Timeout de seguridad: maximo 2 minutos
     setTimeout(() => {
       clearInterval(poll)
       setWaConnecting(false)
+      unsubQr()
+      unsubStatus()
     }, 120_000)
   }
 
@@ -538,14 +555,17 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
             <Section title="Apariencia" icon={<Palette size={16} />}>
               <div>
                 <label className="luma-label mb-3">Tema</label>
-                <div className="flex gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   {[
                     { value: 'dark',   label: '🌙 Oscuro' },
                     { value: 'light',  label: '☀️ Claro' },
+                    { value: 'luma',   label: '🌸 LuMa' },
+                    { value: 'ocean',  label: '🌊 Ocean' },
+                    { value: 'sage',   label: '🌿 Sage' },
                     { value: 'custom', label: '🎨 Personalizado' },
                   ].map(t => (
                     <button key={t.value} type="button" onClick={() => selectTheme(t.value)}
-                      className="flex-1 py-2.5 rounded-xl border text-sm font-medium transition-all"
+                      className="py-2.5 rounded-xl border text-sm font-medium transition-all"
                       style={{
                         borderColor: form.theme === t.value ? 'var(--color-accent)' : 'var(--color-border)',
                         background:  form.theme === t.value ? 'color-mix(in srgb,var(--color-accent) 12%,transparent)' : 'var(--color-surface-2)',

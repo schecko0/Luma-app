@@ -38,6 +38,54 @@
   --color-info:         #2980b9;
 }
 
+/* Tema LuMa — rosa poudre inspirado en la marca */
+:root[data-theme="luma"] {
+  --color-bg:           #fdf6f6;
+  --color-surface:      #ffffff;
+  --color-surface-2:    #f9eeed;
+  --color-border:       #e8cac8;
+  --color-text:         #3d2c2c;
+  --color-text-muted:   #9e7878;
+  --color-accent:       #c8848c;
+  --color-accent-hover: #b86878;
+  --color-danger:       #c0392b;
+  --color-success:      #6aab7e;
+  --color-warning:      #d4956a;
+  --color-info:         #7a9ec8;
+}
+
+/* Tema Ocean — azules profundos con toques de turquesa */
+:root[data-theme="ocean"] {
+  --color-bg:           #0a1628;
+  --color-surface:      #0f2040;
+  --color-surface-2:    #162a54;
+  --color-border:       #1e3a6e;
+  --color-text:         #e8f4f8;
+  --color-text-muted:   #6a9ab8;
+  --color-accent:       #38bcd4;
+  --color-accent-hover: #52d4ec;
+  --color-danger:       #e05a6a;
+  --color-success:      #3ac48a;
+  --color-warning:      #f0a84a;
+  --color-info:         #4a90d9;
+}
+
+/* Tema Sage — verdes suaves estilo spa wellness */
+:root[data-theme="sage"] {
+  --color-bg:           #f4f7f4;
+  --color-surface:      #ffffff;
+  --color-surface-2:    #edf2ed;
+  --color-border:       #ccdacc;
+  --color-text:         #2c3c2c;
+  --color-text-muted:   #6a886a;
+  --color-accent:       #5a9468;
+  --color-accent-hover: #4a7c58;
+  --color-danger:       #c0392b;
+  --color-success:      #3d8b5e;
+  --color-warning:      #c8943a;
+  --color-info:         #4a8ab8;
+}
+
 /* ── Reset y base ─────────────────────────────────────────────────────────── */
 * {
   box-sizing: border-box;

@@ -527,6 +527,25 @@ export async function initWhatsAppClient(): Promise<void> {
 
     const sessionPath = path.join(app.getPath('userData'), '.wwebjs_auth')
 
+    // Limpiar lock files de Chrome que puedan haber quedado de sesiones anteriores
+    // Esto evita el error "The browser is already running" en Mac
+    try {
+      const fs = require('fs')
+      const lockFiles = [
+        path.join(sessionPath, 'session', 'SingletonLock'),
+        path.join(sessionPath, 'session', 'SingletonCookie'),
+        path.join(sessionPath, 'session', 'SingletonSocket'),
+      ]
+      for (const lock of lockFiles) {
+        if (fs.existsSync(lock)) {
+          fs.rmSync(lock, { force: true })
+          logger.info(`[WA] Lock file eliminado: ${lock}`)
+        }
+      }
+    } catch (e) {
+      logger.warn('[WA] No se pudieron limpiar lock files:', e)
+    }
+
     // Resolver el ejecutable de Chromium segun la plataforma
     const getChromiumPath = async (): Promise<string | undefined> => {
       if (!app.isPackaged) return undefined
@@ -600,6 +619,9 @@ export async function initWhatsAppClient(): Promise<void> {
           '--disable-background-networking',
           '--disable-default-apps',
           '--disable-sync',
+          '--hide-crash-restore-bubble',
+          // Ocultar Chrome del Dock en Mac
+          ...(process.platform === 'darwin' ? ['--headless=new'] : []),
         ],
       },
     })

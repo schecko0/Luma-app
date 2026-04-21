@@ -416,6 +416,13 @@ const SettingsGuide = () => (
       (en /Applications/Google Chrome.app). Sin Chrome, el QR no podra generarse.
       En Windows esto no es necesario.
     </CalloutBox>
+    <CalloutBox icon={<AlertTriangle size={16} />} variant="warning" title="Mac: no cerrar Chrome desde el Dock">
+      Mientras Luma este abierta, Chrome corre en segundo plano de forma invisible para mantener
+      la sesion de WhatsApp activa. Si aparece el icono de Chrome en el Dock y lo cierras manualmente,
+      la conexion de WhatsApp se interrumpira y los recordatorios automaticos dejaran de enviarse.
+      Para reconectar, ve a Configuracion y da clic en Vincular — no necesitas escanear el QR de nuevo,
+      la sesion guardada se retoma automaticamente.
+    </CalloutBox>
 
     <SectionTitle>Pestana: Sistema</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>

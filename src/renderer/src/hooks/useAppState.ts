@@ -82,12 +82,10 @@ export function applyTheme(theme: string, settings: Record<string, string> = {})
     return
   }
 
-  // dark o light — limpiar variables inline para que el CSS tome control
+  // dark o light o temas preset — limpiar variables inline para que el CSS tome control
   CSS_VARS.forEach(v => root.style.removeProperty(v))
   root.classList.remove('theme-light')
 
   // El atributo data-theme activa el selector en index.css
-  // :root[data-theme="dark"]  → variables oscuras (default)
-  // :root[data-theme="light"] → variables claras
   root.setAttribute('data-theme', theme)
 }

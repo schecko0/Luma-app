@@ -50,6 +50,7 @@
   "build": {
     "appId": "com.luma.salon",
     "productName": "Luma App",
+    "icon": "build/icons/icon.png",
     "directories": {
       "output": "release"
     },
@@ -71,9 +72,11 @@
       "node_modules/whatsapp-web.js/node_modules/puppeteer-core/**/*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icons/icon.ico"
     },
     "mac": {
+      "icon": "build/icons/icon.icns",
       "target": [
         { "target": "dmg", "arch": ["x64", "arm64"] }
       ]

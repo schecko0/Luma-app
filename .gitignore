@@ -5,7 +5,10 @@ release/
 luma.log
 .vite/
 #dist/
-build/
+# Build output — se regenera, excepto los iconos de la app
+build/*
+!build/icons/
+!build/icons/*
 out/
 
 # Archivos de entorno
