@@ -70,6 +70,11 @@ async function createWindow() {
     frame: process.platform === 'darwin',        // Mac usa frame nativo, Windows no
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#0f0d0b',
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, '..', 'build', 'icons',
+          process.platform === 'win32' ? 'icon.ico' : 'icon.icns')
+      : path.join(__dirname, '../../build/icons',
+          process.platform === 'win32' ? 'icon.ico' : 'icon.icns'),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
