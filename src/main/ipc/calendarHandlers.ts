@@ -62,116 +62,189 @@ function getSalonCalendarId(): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// pullFromGoogle — importa eventos de Google Calendar → BD local
+// pullFromGoogle — importa/actualiza/cancela eventos desde Google Calendar
 //
-// PAGINACIÓN COMPLETA: sigue nextPageToken hasta traer TODOS los eventos del
-// rango. La API de Google entrega máximo 2500 por página; nosotros pedimos
-// 500 por página para un balance entre velocidad y tamaño de respuesta.
+// MODO INCREMENTAL (default): usa gc_sync_token guardado en settings.
+//   Google devuelve SOLO los eventos que cambiaron o se eliminaron desde
+//   la última llamada. Si el token expira (HTTP 410), cae a full pull.
 //
-// Si dateFrom/dateTo no se pasan, usa: hoy-7d hasta hoy+365d (un año).
+// MODO FULL (sin token o force=true): trae todos los eventos del rango
+//   con paginación. Al terminar guarda el nextSyncToken para el próximo
+//   pull incremental (solo cuando el rango no está acotado).
+//
+// DETECCIÓN DE CAMBIOS (sin hash):
+//   Cada evento trae `updated` (ISO timestamp de Google). Lo comparamos
+//   contra gc_updated_at en la DB: si son iguales → skip sin tocar DB.
+//   Solo escribimos si el evento es nuevo o Google tiene timestamp mayor.
+//
+// EVENTOS ELIMINADOS:
+//   Con syncToken llegan como { id, status:'cancelled' }.
+//   En full pull usamos showDeleted:true para el mismo efecto.
+//   En ambos casos marcamos sync_status='cancelled' y guardamos snapshot.
 // ─────────────────────────────────────────────────────────────────────────────
-// Semáforo para evitar múltiples pulls simultáneos
 let isPullingFromGoogle = false
 
 async function pullFromGoogle(
   oauth2:   ReturnType<typeof buildOAuthClient>,
-  dateFrom?: string,   // 'YYYY-MM-DD' — límite inferior del rango
-  dateTo?:   string,   // 'YYYY-MM-DD' — límite superior del rango
-): Promise<{ imported: number; updated: number }> {
+  dateFrom?: string,
+  dateTo?:   string,
+  force?:    boolean,
+): Promise<{ imported: number; updated: number; cancelled: number; mode: 'incremental' | 'full' }> {
 
-  if (isPullingFromGoogle) {    
-    return { imported: 0, updated: 0 }
-  }
-
+  if (isPullingFromGoogle) return { imported: 0, updated: 0, cancelled: 0, mode: 'incremental' }
   isPullingFromGoogle = true
+
   const db    = getDb()
   const cal   = google.calendar({ version: 'v3', auth: oauth2 })
   const calId = getSalonCalendarId()
   const now   = nowISO()
 
-  try {
-    // ... (resto del código del pull que ya actualizamos)
+  // ── Leer sync token guardado ──────────────────────────────────────────
+  const savedToken = (() => {
+    const row = db.prepare("SELECT value FROM settings WHERE key='gc_sync_token'").get() as { value: string } | undefined
+    return (row?.value && !force) ? row.value : null
+  })()
 
-  // Rango por defecto: últimos 7 días + próximos 365 días
-  const from = dateFrom
-    ? new Date(dateFrom + 'T00:00:00')
-    : (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d })()
-  const to   = dateTo
-    ? new Date(dateTo + 'T23:59:59')
-    : (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return d })()
-
-  let imported    = 0
-  let updated     = 0
-  let pageToken: string | undefined = undefined
-
-  // Preparar sentencias fuera del loop para velocidad
-  const selectStmt = db.prepare('SELECT id FROM appointments WHERE google_event_id = ?')
-  const updateStmt = db.prepare(`
-    UPDATE appointments SET
-      title = ?, start_at = ?, end_at = ?, description = ?,
-      sync_status = 'synced', last_synced_at = ?, updated_at = ?
-    WHERE google_event_id = ?
-  `)
-  const insertStmt = db.prepare(`
+  // ── Sentencias reutilizables ──────────────────────────────────────────
+  const selectStmt  = db.prepare('SELECT id, gc_updated_at, sync_status FROM appointments WHERE google_event_id = ?')
+  const insertStmt  = db.prepare(`
     INSERT INTO appointments
       (google_event_id, title, description, start_at, end_at,
-       all_day, color, sync_status, last_synced_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?)
+       all_day, color, sync_status, gc_updated_at, last_synced_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?)
   `)
+  const updateStmt  = db.prepare(`
+    UPDATE appointments SET
+      title=?, start_at=?, end_at=?, description=?,
+      sync_status='synced', gc_updated_at=?, last_synced_at=?, updated_at=?
+    WHERE google_event_id=?
+  `)
+  const cancelStmt  = db.prepare(
+    "UPDATE appointments SET sync_status='cancelled', updated_at=? WHERE id=? AND sync_status != 'cancelled'"
+  )
+  const snapshotStmt = db.prepare(`
+    INSERT OR IGNORE INTO cancelled_appointments
+      (appointment_id, snapshot_title, snapshot_start_at, snapshot_end_at,
+       snapshot_description, snapshot_color, snapshot_all_day, snapshot_google_event_id,
+       cancelled_from, cancel_reason, cancelled_at)
+    VALUES (?,?,?,?,?,?,?,?,'agenda','Eliminado en Google Calendar',?)
+  `)
+  const saveToken = db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('gc_sync_token', ?, ?)"
+  )
 
-  // ── Paginación: seguir nextPageToken hasta agotar resultados ─────────
-  do {
-  
-    const resp = await cal.events.list({
-      calendarId:    calId,
-      timeMin:       from.toISOString(),
-      timeMax:       to.toISOString(),
-      singleEvents:  true,
-      orderBy:       'startTime',
-      maxResults:    250,           // Reducimos un poco el lote para mayor fluidez
-      pageToken,
-    })
+  let imported  = 0
+  let updated   = 0
+  let cancelled = 0
 
-    pageToken = resp.data.nextPageToken ?? undefined
-    const events = resp.data.items ?? []
+  // ── Procesador de lote (transacción, compartido por ambos modos) ──────
+  const processBatch = db.transaction((events: any[]) => {
+    for (const ev of events) {
+      if (!ev.id) continue
 
-    if (events.length > 0) {
-      // USAR TRANSACCIÓN PARA TODA LA PÁGINA (Ultra rápido)
-      const processBatch = db.transaction((evs) => {
-        for (const ev of evs) {
-          if (!ev.id || !ev.summary) continue
-          if (ev.status === 'cancelled') continue
-
-          const startAt = ev.start?.dateTime ?? (ev.start?.date ? ev.start.date + 'T00:00:00' : null)
-          const endAt   = ev.end?.dateTime   ?? (ev.end?.date   ? ev.end.date   + 'T00:00:00' : null)
-          if (!startAt || !endAt) continue
-
-          const existing = selectStmt.get(ev.id)
-
-          if (existing) {
-            updateStmt.run(ev.summary, startAt, endAt, ev.description ?? null, now, now, ev.id)
-            updated++
-          } else {
-            insertStmt.run(
-              ev.id, ev.summary, ev.description ?? null,
-              startAt, endAt,
-              ev.start?.date ? 1 : 0,
-              googleColorIdToName(ev.colorId ?? ''),
-              now, now, now,
-            )
-            imported++
-          }
+      if (ev.status === 'cancelled') {
+        const row = selectStmt.get(ev.id) as { id: number; gc_updated_at: string | null; sync_status: string } | undefined
+        if (row && row.sync_status !== 'cancelled') {
+          cancelStmt.run(now, row.id)
+          snapshotStmt.run(
+            row.id,
+            ev.summary ?? '(sin título)',
+            ev.start?.dateTime ?? ev.start?.date ?? now,
+            ev.end?.dateTime   ?? ev.end?.date   ?? now,
+            ev.description ?? null, null, ev.start?.date ? 1 : 0, ev.id, now
+          )
+          cancelled++
         }
-      })
-      processBatch(events)
-    }
-  } while (pageToken)
+        continue
+      }
 
-  return { imported, updated }
+      if (!ev.summary) continue
+      const startAt = ev.start?.dateTime ?? (ev.start?.date ? ev.start.date + 'T00:00:00' : null)
+      const endAt   = ev.end?.dateTime   ?? (ev.end?.date   ? ev.end.date   + 'T00:00:00' : null)
+      if (!startAt || !endAt) continue
+
+      const gcUpdated = ev.updated ?? null
+      const existing  = selectStmt.get(ev.id) as { id: number; gc_updated_at: string | null; sync_status: string } | undefined
+
+      if (!existing) {
+        insertStmt.run(ev.id, ev.summary, ev.description ?? null, startAt, endAt,
+          ev.start?.date ? 1 : 0, googleColorIdToName(ev.colorId ?? ''), gcUpdated, now, now, now)
+        imported++
+      } else if (gcUpdated && existing.gc_updated_at && gcUpdated <= existing.gc_updated_at) {
+        continue  // mismo timestamp → sin cambios, skip
+      } else {
+        updateStmt.run(ev.summary, startAt, endAt, ev.description ?? null, gcUpdated, now, now, ev.id)
+        updated++
+      }
+    }
+  })
+
+  try {
+    if (savedToken) {
+      // ── MODO INCREMENTAL ─────────────────────────────────────────────
+      logger.info('[Pull] Modo incremental con syncToken')
+      let pageToken: string | undefined
+      try {
+        do {
+          const resp = await cal.events.list({
+            calendarId: calId, syncToken: pageToken ?? savedToken,
+            showDeleted: true, maxResults: 250,
+          })
+          pageToken = resp.data.nextPageToken ?? undefined
+          const events = resp.data.items ?? []
+          if (events.length > 0) processBatch(events)
+          if (!pageToken && resp.data.nextSyncToken) {
+            saveToken.run(resp.data.nextSyncToken, now)
+            logger.info('[Pull] syncToken actualizado (incremental)')
+          }
+        } while (pageToken)
+      } catch (err: any) {
+        if (err.code === 410 || err?.response?.status === 410) {
+          logger.warn('[Pull] syncToken expirado (410) → full pull')
+          saveToken.run('', now)
+          isPullingFromGoogle = false
+          return pullFromGoogle(oauth2, dateFrom, dateTo, true)
+        }
+        throw err
+      }
+      return { imported, updated, cancelled, mode: 'incremental' }
+    }
+
+    // ── MODO FULL ────────────────────────────────────────────────────────
+    logger.info('[Pull] Modo full pull')
+    const from = dateFrom
+      ? new Date(dateFrom + 'T00:00:00')
+      : (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d })()
+    const to = dateTo
+      ? new Date(dateTo + 'T23:59:59')
+      : (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return d })()
+
+    let pageToken: string | undefined
+    let lastSyncToken: string | undefined
+
+    do {
+      const resp = await cal.events.list({
+        calendarId: calId, timeMin: from.toISOString(), timeMax: to.toISOString(),
+        singleEvents: true, orderBy: 'startTime', showDeleted: true, maxResults: 250, pageToken,
+      })
+      pageToken     = resp.data.nextPageToken ?? undefined
+      lastSyncToken = resp.data.nextSyncToken  ?? lastSyncToken
+      const events  = resp.data.items ?? []
+      if (events.length > 0) processBatch(events)
+    } while (pageToken)
+
+    // Solo guardamos el token si fue un full pull sin rango acotado
+    // (rango acotado = token parcial que no representa el estado completo)
+    if (lastSyncToken && !dateFrom && !dateTo) {
+      saveToken.run(lastSyncToken, now)
+      logger.info('[Pull] nextSyncToken guardado (full pull)')
+    }
+
+    return { imported, updated, cancelled, mode: 'full' }
   } finally {
-  isPullingFromGoogle = false
+    isPullingFromGoogle = false
   }
-  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // pushToGoogle — crea o actualiza un evento en Google
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,13 +371,58 @@ function handleAuthError(err: any): boolean {
 let isProcessingQueue = false
 
 export async function startSyncWorker() {
-  // Ejecutar cada 1 minuto (o al detectar cambio de red)
   setInterval(() => {
     processSyncQueue().catch(err => logger.error('Sync Worker Error', err))
+    pullIncremental().catch(err => logger.error('Pull Incremental Error', err))
   }, 60_000)
-  
-  // Primera ejecución inmediata tras 5 segundos del arranque
-  setTimeout(() => processSyncQueue(), 5000)
+
+  // Al arrancar: procesar cola pendiente inmediatamente
+  setTimeout(() => processSyncQueue(), 5_000)
+
+  // Al arrancar: si no hay syncToken aún (primer uso o después de migración),
+  // hacer un full pull diferido para generarlo. Se hace con delay para no
+  // bloquear el arranque de la app. Si no hay OAuth conectado, no hace nada.
+  setTimeout(async () => {
+    const db = getDb()
+    if (!db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()) return
+    const tokenRow = db.prepare("SELECT value FROM settings WHERE key='gc_sync_token'").get() as { value: string } | undefined
+    if (tokenRow?.value) return  // ya tenemos syncToken, el incremental se encarga
+
+    logger.info('[SyncWorker] Sin syncToken — iniciando full pull diferido para generarlo...')
+    try {
+      const oauth2 = buildOAuthClient()
+      if (!loadTokens(oauth2)) return
+      const result = await pullFromGoogle(oauth2, undefined, undefined, true)  // force=true → full
+      logger.info(`[SyncWorker] Full pull inicial completado: +${result.imported} nuevas, ~${result.updated} actualizadas, x${result.cancelled} canceladas. syncToken guardado.`)
+      if (result.imported > 0 || result.updated > 0 || result.cancelled > 0) {
+        BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
+      }
+    } catch (err: any) {
+      if (handleAuthError(err)) return
+      logger.error('[SyncWorker] Error en full pull inicial', err)
+    }
+  }, 15_000)  // 15s de delay: la app ya está lista y el usuario puede trabajar
+}
+
+// Pull incremental en background — solo corre si hay token OAuth y syncToken
+async function pullIncremental(): Promise<void> {
+  const db = getDb()
+  if (!db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()) return
+  const tokenRow = db.prepare("SELECT value FROM settings WHERE key='gc_sync_token'").get() as { value: string } | undefined
+  if (!tokenRow?.value) return  // sin syncToken no hay incremental, esperamos el próximo full pull
+
+  try {
+    const oauth2 = buildOAuthClient()
+    if (!loadTokens(oauth2)) return
+    const result = await pullFromGoogle(oauth2)
+    if (result.imported > 0 || result.updated > 0 || result.cancelled > 0) {
+      logger.info(`[PullIncremental] +${result.imported} nuevas, ~${result.updated} actualizadas, x${result.cancelled} canceladas`)
+      BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
+    }
+  } catch (err: any) {
+    if (handleAuthError(err)) return
+    logger.error('[PullIncremental] Error', err)
+  }
 }
 
 async function processSyncQueue(): Promise<void> {
@@ -457,8 +575,13 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
 
   // ── Desconectar ───────────────────────────────────────────────────────
   ipcMain.handle('calendar:disconnect', () => {
-    try { getDb().prepare('DELETE FROM google_oauth_tokens WHERE id=1').run(); return { ok: true } }
-    catch (e: unknown) { return { ok: false, error: String(e) } }
+    try {
+      const db = getDb()
+      db.prepare('DELETE FROM google_oauth_tokens WHERE id=1').run()
+      // Limpiar el syncToken al desconectar — el próximo connect hará full pull
+      db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('gc_sync_token', '', datetime('now'))").run()
+      return { ok: true }
+    } catch (e: unknown) { return { ok: false, error: String(e) } }
   })
 
   // ── Listar calendarios de la cuenta ──────────────────────────────────

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import {
-  CalendarDays, ChevronLeft, ChevronRight, Plus,
+import { CalendarDays, ChevronLeft, ChevronRight, Plus,
   Wifi, WifiOff, Settings2, AlertCircle, Check, Loader2,
-  Calendar, LayoutGrid, LogOut, RefreshCw, Bell, BellOff,
+  Calendar, LayoutGrid, CalendarRange, LogOut, RefreshCw, Bell, BellOff,
   Cloud, CloudOff, CloudAlert, Link2, MessageCircle,
 } from 'lucide-react'
 import type { Appointment, Employee } from '../types'
@@ -11,7 +10,7 @@ import { Modal } from '../components/ui/Modal'
 import { AppointmentModal } from '../components/agenda/AppointmentModal'
 import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth,
-  addDays, addWeeks, addMonths, subWeeks, subMonths,
+  addDays, addWeeks, addMonths, subWeeks, subMonths, subDays,
   format, isSameDay, isSameMonth, parseISO, isToday,
 } from 'date-fns'
 import { WhatsAppPreviewModal } from '../components/agenda/WhatsAppPreviewModal'
@@ -37,7 +36,7 @@ const aptColor = (apt: Appointment) => {
   return GC_HEX[apt.color ?? ''] ?? GC_HEX[apt.employee_color ?? ''] ?? 'var(--color-accent)'
 }
 
-type CalView = 'week' | 'month'
+type CalView = 'day' | 'week' | 'month'
 interface GcStatus { connected: boolean; has_credentials: boolean; connected_at: string | null; calendar_id: string }
 interface WaStatus { status: string; phone: string | null }
 
@@ -61,15 +60,17 @@ export const AgendaPage: React.FC = () => {
   const [defaultStart, setDefStart] = useState<string | undefined>()
   const [cancelConfirm, setCancelConfirm] = useState<{ onConfirm: () => void; type: 'cancel-apt' | 'disconnect-gc' } | null>(null)
   const [pastDateConfirm, setPastDateConfirm] = useState<string | null>(null)
-  const [alertsEnabled, setAlerts]  = useState(true)
-  const alertTimerRef               = useRef<ReturnType<typeof setInterval> | null>(null)
-
+  
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 4000)
   }
 
   const { rangeFrom, rangeTo } = useMemo(() => {
+    if (view === 'day') return {
+      rangeFrom: format(current, 'yyyy-MM-dd'),
+      rangeTo:   format(current, 'yyyy-MM-dd'),
+    }
     if (view === 'week') return {
       rangeFrom: format(startOfWeek(current, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
       rangeTo:   format(endOfWeek(current,   { weekStartsOn: 1 }), 'yyyy-MM-dd'),
@@ -97,9 +98,7 @@ export const AgendaPage: React.FC = () => {
   // Cargar estado de WhatsApp al montar y escuchar cambios en tiempo real
   useEffect(() => {
     // Sincronizar estado del toggle con la preferencia guardada
-    window.electronAPI.alerts.getEnabled().then((res: any) => {
-      if (res.ok) setAlerts(res.data)
-    })
+    
     window.electronAPI.whatsapp.getStatus().then((res: any) => {
       if (res.ok) setWaStatus(res.data)
     })
@@ -123,16 +122,10 @@ export const AgendaPage: React.FC = () => {
     return () => { unsubUpdate(); unsubAuth() }
   }, [loadAll, loading])
 
-  // Motor de alertas — ahora vive en el main process (startAlertWorker)
-  // Este efecto solo sincroniza el toggle de la UI con el worker
-  useEffect(() => {
-    if (alertTimerRef.current) clearInterval(alertTimerRef.current)
-    window.electronAPI.alerts.setEnabled(alertsEnabled)
-    if (!alertsEnabled && window.speechSynthesis) window.speechSynthesis.cancel()
-  }, [alertsEnabled])
+  
 
-  const prev    = () => setCurrent(v => view === 'week' ? subWeeks(v, 1) : subMonths(v, 1))
-  const next    = () => setCurrent(v => view === 'week' ? addWeeks(v, 1) : addMonths(v, 1))
+  const prev    = () => setCurrent(v => view === 'day' ? subDays(v, 1) : view === 'week' ? subWeeks(v, 1) : subMonths(v, 1))
+  const next    = () => setCurrent(v => view === 'day' ? addDays(v, 1) : view === 'week' ? addWeeks(v, 1) : addMonths(v, 1))
   const goToday = () => setCurrent(new Date())
 
   const openNew = (startISO?: string) => {
@@ -196,7 +189,9 @@ export const AgendaPage: React.FC = () => {
     }
   }
 
-  const periodLabel = view === 'week'
+  const periodLabel = view === 'day'
+    ? format(current, "EEEE d 'de' MMMM yyyy", { locale: es }).replace(/^\w/, c => c.toUpperCase())
+    : view === 'week'
     ? `${format(startOfWeek(current, { weekStartsOn: 1 }), 'd MMM', { locale: es })} – ${format(endOfWeek(current, { weekStartsOn: 1 }), 'd MMM yyyy', { locale: es })}`
     : format(current, 'MMMM yyyy', { locale: es }).replace(/^\w/, c => c.toUpperCase())
 
@@ -218,24 +213,21 @@ export const AgendaPage: React.FC = () => {
             <button onClick={next} className="luma-btn-ghost p-2"><ChevronRight size={16} /></button>
 
             <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
-              {(['week', 'month'] as CalView[]).map(v => (
+              {(['day', 'week', 'month'] as CalView[]).map(v => (
                 <button key={v} onClick={() => setView(v)}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors"
                   style={{
                     background: view === v ? 'var(--color-accent)' : 'transparent',
                     color:      view === v ? 'white' : 'var(--color-text-muted)',
                   }}>
-                  {v === 'week' ? <><LayoutGrid size={12} /> Semana</> : <><Calendar size={12} /> Mes</>}
+                  {v === 'day'   ? <><CalendarRange size={12} /> Día</>   : null}
+                  {v === 'week'  ? <><LayoutGrid size={12} /> Semana</> : null}
+                  {v === 'month' ? <><Calendar size={12} /> Mes</>     : null}
                 </button>
               ))}
             </div>
 
-            <button onClick={() => setAlerts(a => !a)}
-              title={alertsEnabled ? 'Desactivar alertas sonoras' : 'Activar alertas sonoras'}
-              className="luma-btn-ghost p-2"
-              style={{ color: alertsEnabled ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
-              {alertsEnabled ? <Bell size={16} /> : <BellOff size={16} />}
-            </button>
+            
             <button onClick={openWaBulk} className="luma-btn-ghost text-xs flex items-center gap-1.5"
                     style={{ color: 'var(--color-accent)' }}
                     title="Enviar recordatorios WhatsApp para citas de mañana">
@@ -275,12 +267,15 @@ export const AgendaPage: React.FC = () => {
       <div className="flex-1 overflow-hidden">
         {loading ? (
           <div className="flex justify-center items-center h-full"><Spinner size={32} /></div>
+        ) : view === 'day' ? (
+          <DayView current={current} appointments={appointments} employees={employees}
+            onClickSlot={iso => openNew(iso)} onClickApt={openEdit} />
         ) : view === 'week' ? (
           <WeekView current={current} appointments={appointments} employees={employees}
             onClickSlot={iso => openNew(iso)} onClickApt={openEdit} />
         ) : (
           <MonthView current={current} appointments={appointments}
-            onClickDay={d => openNew(d.toISOString())} onClickApt={openEdit} />
+            onClickDay={d => { setCurrent(d); setView('day') }} onClickApt={openEdit} />
         )}
       </div>
 
@@ -649,6 +644,172 @@ const WeekView: React.FC<{
               )
             })
           })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Vista diaria — todo el ancho para un solo día ──────────────────────────────────────
+const DayView: React.FC<{
+  current: Date; appointments: Appointment[]; employees: Employee[]
+  onClickSlot: (iso: string) => void; onClickApt: (apt: Appointment) => void
+}> = ({ current, appointments, onClickSlot, onClickApt }) => {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Scroll al inicio del horario laboral o a la hora actual
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const targetHour = isToday(current) ? Math.max(new Date().getHours() - 1, 0) : 7
+    el.scrollTop = targetHour * HOUR_H
+  }, [current])
+
+  const aptTop    = (apt: Appointment) => {
+    const d = parseISO(apt.start_at)
+    return (d.getHours() + d.getMinutes() / 60) * HOUR_H
+  }
+  const aptHeight = (apt: Appointment) =>
+    Math.max(
+      ((new Date(apt.end_at).getTime() - new Date(apt.start_at).getTime()) / 60000 / 60) * HOUR_H,
+      28
+    )
+
+  const dayApts  = appointments.filter(a => isSameDay(parseISO(a.start_at), current))
+  const layouts  = useMemo(() => computeLayout(dayApts), [dayApts])
+  const nowTop   = useMemo(() => {
+    const n = new Date()
+    return (n.getHours() + n.getMinutes() / 60) * HOUR_H
+  }, [])
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header del día */}
+      <div className="flex flex-shrink-0 border-b px-4 py-3 items-center gap-3"
+           style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+        <div className="flex flex-col">
+          <span className="text-2xl font-bold leading-none"
+                style={{ color: isToday(current) ? 'var(--color-accent)' : 'var(--color-text)' }}>
+            {format(current, 'd')}
+          </span>
+          <span className="text-xs font-medium mt-0.5"
+                style={{ color: isToday(current) ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
+            {format(current, 'EEEE', { locale: es }).toUpperCase()}
+          </span>
+        </div>
+        <div className="w-px h-8 mx-1" style={{ background: 'var(--color-border)' }} />
+        <div>
+          <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+            {layouts.length} cita{layouts.length !== 1 ? 's' : ''}
+          </span>
+          {isToday(current) && (
+            <span className="ml-2 text-xs px-2 py-0.5 rounded-full font-medium"
+                  style={{ background: 'color-mix(in srgb,var(--color-accent) 15%,transparent)', color: 'var(--color-accent)' }}>
+              Hoy
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Cuerpo scrollable */}
+      <div ref={scrollRef} className="flex flex-1 overflow-auto">
+
+        {/* Columna de horas */}
+        <div className="flex-shrink-0 w-14 relative" style={{ height: HOURS.length * HOUR_H }}>
+          {HOURS.map(h => (
+            <div key={h} className="absolute right-2 text-xs select-none"
+                 style={{ top: h === 0 ? 4 : h * HOUR_H - 8, color: 'var(--color-text-muted)' }}>
+              {String(h).padStart(2, '0')}:00
+            </div>
+          ))}
+        </div>
+
+        {/* Columna de eventos */}
+        <div className="flex-1 relative border-l" style={{ height: HOURS.length * HOUR_H, borderColor: 'var(--color-border)' }}>
+
+          {/* Franjas de hora clickeables */}
+          {HOURS.map(h => (
+            <div key={h}
+              className="absolute w-full border-b hover:bg-white/[0.02] transition-colors cursor-pointer"
+              style={{ top: h * HOUR_H, height: HOUR_H, borderColor: 'var(--color-border)' }}
+              onClick={() => {
+                const d = new Date(current); d.setHours(h, 0, 0, 0)
+                onClickSlot(d.toISOString())
+              }}
+            />
+          ))}
+
+          {/* Línea de ahora */}
+          {isToday(current) && (
+            <div style={{
+              position: 'absolute', top: nowTop, left: 0, right: 0,
+              height: 2, background: 'var(--color-danger)', zIndex: 3, pointerEvents: 'none',
+            }}>
+              <div style={{
+                position: 'absolute', left: -5, top: -4,
+                width: 10, height: 10, borderRadius: '50%', background: 'var(--color-danger)',
+              }} />
+            </div>
+          )}
+
+          {/* Citas — ocupan todo el ancho proporcional al número de solapamientos */}
+          {layouts.map(apt => {
+            const PADDING = 4
+            const colW    = 100 / apt.colCount
+            const left    = colW * apt.colIndex
+            return (
+              <div key={apt.id}
+                onClick={e => { e.stopPropagation(); onClickApt(apt) }}
+                className="absolute rounded-xl text-white cursor-pointer overflow-hidden shadow-lg hover:brightness-110 transition-all flex flex-col gap-1 border border-white/10"
+                style={{
+                  left:   `calc(${left}% + ${PADDING}px)`,
+                  width:  `calc(${colW}% - ${PADDING * 2}px)`,
+                  top:    aptTop(apt) + 2,
+                  height: aptHeight(apt) - 4,
+                  background: aptColor(apt), zIndex: 2,
+                  padding: '8px 12px',
+                }}
+                title={`${apt.title}${apt.client_name ? ' — ' + apt.client_name : ''}${apt.employee_name ? ' · ' + apt.employee_name : ''}`}
+              >
+                {/* Fila superior: icono sync + horario */}
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-1.5 items-center">
+                    {getSyncIcon(apt.sync_status)}
+                    {!apt.employee_id && <span title="Evento externo"><Link2 size={11} className="text-white/70" /></span>}
+                  </div>
+                  <span className="text-[10px] font-bold opacity-80 whitespace-nowrap tabular-nums">
+                    {format(parseISO(apt.start_at), 'H:mm')} – {format(parseISO(apt.end_at), 'H:mm')}
+                  </span>
+                </div>
+
+                {/* Título — se lee completo en esta vista */}
+                <p className="font-bold leading-snug text-sm drop-shadow-sm line-clamp-2">{apt.title}</p>
+
+                {/* Cliente */}
+                {apt.client_name && (
+                  <p className="opacity-90 text-xs font-medium italic leading-none">
+                    • {apt.client_name}
+                  </p>
+                )}
+
+                {/* Empleado — solo si hay espacio */}
+                {aptHeight(apt) > 60 && apt.employee_name && (
+                  <p className="mt-auto opacity-70 text-[10px] uppercase tracking-wider font-semibold truncate">
+                    {apt.employee_name}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Estado vacío */}
+          {layouts.length === 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none"
+                 style={{ top: 7 * HOUR_H }}>
+              <CalendarRange size={28} style={{ color: 'var(--color-text-muted)', opacity: 0.4 }} />
+              <p className="text-sm" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>Sin citas este día</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -59,6 +59,7 @@ function runMigrations() {
   if (current < 8) applyMigration8()   // ← Motor de comisiones: modo + overhead
   if (current < 9) applyMigration9()   // ← Motor de comisiones: modo + overhead
   if (current < 10) applyMigration10()  // ← Papelera de citas + auditoría de cancelaciones
+  if (current < 11) applyMigration11()  // ← gc_updated_at en appointments + gc_sync_token en settings
 }
 
 function getCurrentVersion(): number {
@@ -670,6 +671,40 @@ function applyMigration10() {
   migrate()
   setVersion(10)
   log('Migración 10 completada.')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 11 — gc_updated_at en appointments + gc_sync_token en settings
+//
+// gc_updated_at  → guarda el campo `updated` que devuelve Google por evento.
+//                  Permite comparar en el pull incremental: si el timestamp
+//                  de Google es más nuevo que el nuestro, hay que actualizar.
+//                  Si es igual o menor, se ignora sin tocar la DB.
+//
+// gc_sync_token  → nextSyncToken que devuelve Google al final de un pull
+//                  completo. En el siguiente pull se pasa como syncToken y
+//                  Google devuelve SOLO los eventos que cambiaron o fueron
+//                  eliminados desde ese momento. Ultra rápido vs. poll completo.
+//                  Si el token expira (410 Gone), se borra y se hace full pull.
+// ─────────────────────────────────────────────────────────────────────────────
+function applyMigration11() {
+  log('Aplicando migración 11: gc_updated_at + gc_sync_token...')
+  const migrate = db.transaction(() => {
+    // Columna en appointments: timestamp `updated` del evento en Google
+    db.exec(`
+      ALTER TABLE appointments ADD COLUMN gc_updated_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_appointments_gc_updated
+        ON appointments(gc_updated_at);
+    `)
+    // Setting para el sync token de Google Calendar
+    db.exec(`
+      INSERT OR IGNORE INTO settings (key, value)
+      VALUES ('gc_sync_token', '');
+    `)
+  })
+  migrate()
+  setVersion(11)
+  log('Migración 11 completada.')
 }
 
 function applyMigration6() {
