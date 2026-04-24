@@ -57,6 +57,7 @@ function runMigrations() {
   if (current < 6) applyMigration6()   // ← WhatsApp reminder log + settings
   if (current < 7) applyMigration7()   // ← commission_run_id en invoice_service_employees
   if (current < 8) applyMigration8()   // ← Motor de comisiones: modo + overhead
+  if (current < 9) applyMigration9()   // ← Motor de comisiones: modo + overhead
   if (current < 10) applyMigration10()  // ← Papelera de citas + auditoría de cancelaciones
 }
 

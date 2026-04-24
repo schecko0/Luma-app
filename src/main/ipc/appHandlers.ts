@@ -42,6 +42,30 @@ export function registerAppHandlers(ipcMain: IpcMain) {
     return ok
   })
 
+  // Descargar archivo de log (copia a ruta elegida por el usuario)
+  ipcMain.handle('app:downloadLogs', async () => {
+    try {
+      const logPath = logger.getLogPath()
+      if (!fs.existsSync(logPath)) return { ok: false, error: 'El archivo de log no existe aún.' }
+
+      const date = new Date().toISOString().split('T')[0]
+      const { filePath, canceled } = await dialog.showSaveDialog({
+        title: 'Guardar archivo de log',
+        defaultPath: `luma_log_${date}.txt`,
+        filters: [{ name: 'Archivo de texto', extensions: ['txt', 'log'] }],
+      })
+
+      if (canceled || !filePath) return { ok: false, error: 'Cancelado' }
+
+      fs.copyFileSync(logPath, filePath)
+      //logger.info(`[App] Log descargado por el administrador en: ${filePath}`)
+      return { ok: true, data: filePath }
+    } catch (err) {
+      logger.error('Error al descargar log', err)
+      return { ok: false, error: String(err) }
+    }
+  })
+
   // Obtener errores guardados en la base de datos
   ipcMain.handle('app:getErrorLogs', (_event, page: number = 1, pageSize: number = 20) => {
     try {

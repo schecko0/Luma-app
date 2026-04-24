@@ -4,7 +4,8 @@ import { autoUpdater } from 'electron-updater'
 import { getDb, initDatabase } from '../database/database'
 import { registerAllHandlers } from './ipc/handlers'
 import { logger, setupLogger } from './logger'
-import { startSyncWorker } from './ipc/calendarHandlers'
+import { startSyncWorker }    from './ipc/calendarHandlers'
+import { startAlertWorker }   from './ipc/alertHandlers'
 import { initWhatsAppClient } from './whatsappService'
 
 // Configuración de logs para el updater
@@ -150,6 +151,7 @@ app.whenReady().then(async () => {
   })
 
   startSyncWorker()
+  startAlertWorker()
   try {
     const row = getDb().prepare("SELECT value FROM settings WHERE key='wa_enabled'").get() as { value: string } | undefined
     if (row?.value === 'true') {

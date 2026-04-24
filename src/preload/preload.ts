@@ -13,6 +13,7 @@ const api = {
   getLogPath:   () => ipcRenderer.invoke('app:getLogPath'),
   readLogs:     (lines?: number) => ipcRenderer.invoke('app:readLogs', lines),
   clearLogs:    () => ipcRenderer.invoke('app:clearLogs'),
+  downloadLogs: () => ipcRenderer.invoke('app:downloadLogs'),
   logError:     (message: string, stack?: string) => ipcRenderer.invoke('app:logError', message, stack),
   getErrorLogs: (page?: number, pageSize?: number) => ipcRenderer.invoke('app:getErrorLogs', page, pageSize),
   exportDb:     () => ipcRenderer.invoke('app:exportDb'),
@@ -46,6 +47,17 @@ const api = {
   },
 
   installUpdate: () => ipcRenderer.send('install-update'),
+
+  // ── ALERTAS DE CITAS ─────────────────────────────────────────────────
+  alerts: {
+    getEnabled:  () => ipcRenderer.invoke('alerts:getEnabled'),
+    setEnabled:  (enabled: boolean) => ipcRenderer.invoke('alerts:setEnabled', enabled),
+    onAlert: (cb: (data: { title: string; body: string; diffMin: number }) => void) => {
+      const wrapped = (_: any, data: any) => cb(data)
+      ipcRenderer.on('agenda:alert', wrapped)
+      return () => ipcRenderer.removeListener('agenda:alert', wrapped)
+    },
+  },
 
   // ── EMPLEADOS ─────────────────────────────────────────────────────────
   employees: {

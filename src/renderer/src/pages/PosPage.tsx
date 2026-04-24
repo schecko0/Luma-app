@@ -28,6 +28,32 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
 }
 const numVal = (n: number) => n === 0 ? '' : String(n)
 
+// ── Borrador de venta en curso ────────────────────────────────────────────────
+const DRAFT_KEY = 'luma_pos_draft'
+
+interface PosDraft {
+  cart:            CartLine[]
+  client:          { id: number; label: string } | null
+  payments:        PaymentLine[]
+  requiresInvoice: boolean
+  notes:           string
+}
+
+const loadDraft = (): PosDraft | null => {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    return raw ? (JSON.parse(raw) as PosDraft) : null
+  } catch { return null }
+}
+
+const saveDraft = (draft: PosDraft) => {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)) } catch { /* sin-op */ }
+}
+
+const clearDraft = () => {
+  try { localStorage.removeItem(DRAFT_KEY) } catch { /* sin-op */ }
+}
+
 // ── Vista principal ───────────────────────────────────────────────────────────
 export const PosPage: React.FC = () => {
   const [tab, setTab] = useState<'sale' | 'history'>('sale')
@@ -69,20 +95,24 @@ export const PosPage: React.FC = () => {
 
 // ── Vista de venta ────────────────────────────────────────────────────────────
 const SaleView: React.FC = () => {
-  const [cart, setCart]              = useState<CartLine[]>([])
-  const [client, setClient]          = useState<{ id: number; label: string } | null>(null)
+  // Restaurar borrador si existe (persiste navegación entre secciones)
+  const _draft = loadDraft()
+
+  const [cart, setCart]              = useState<CartLine[]>(_draft?.cart ?? [])
+  const [client, setClient]          = useState<{ id: number; label: string } | null>(_draft?.client ?? null)
   const [openRegister, setOpenReg]   = useState<CashRegister | null>(null)
   const [taxRate, setTaxRate]        = useState(0)
   const [commissionMode, setCommissionMode] = useState<CommissionMode>('simple')
   const [overheadPct, setOverheadPct] = useState(0)
-  const [payments, setPayments]      = useState<PaymentLine[]>([{ method: 'cash', amount: 0, reference: '' }])
-  const [requiresInvoice, setReqInv] = useState(false)
-  const [notes, setNotes]            = useState('')
+  const [payments, setPayments]      = useState<PaymentLine[]>(_draft?.payments ?? [{ method: 'cash', amount: 0, reference: '' }])
+  const [requiresInvoice, setReqInv] = useState(_draft?.requiresInvoice ?? false)
+  const [notes, setNotes]            = useState(_draft?.notes ?? '')
   const [saving, setSaving]          = useState(false)
   const [error, setError]            = useState<string | null>(null)
   const [successFolio, setSuccess]   = useState<string | null>(null)
   const [allEmployees, setAllEmp]    = useState<Employee[]>([])
   const [confirmNoClient, setConfirmNoClient] = useState(false)
+  const [hasDraft, setHasDraft]      = useState(!!_draft && (_draft.cart.length > 0 || !!_draft.client))
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') handleClear() }
@@ -115,6 +145,14 @@ const SaleView: React.FC = () => {
   const paymentsTotal = payments.reduce((s, p) => s + (p.amount || 0), 0)
   const remaining     = total - paymentsTotal
   const paymentOk     = Math.abs(remaining) < 0.02
+
+  // ── Persistir borrador automáticamente al cambiar cualquier campo relevante ────
+  useEffect(() => {
+    if (cart.length > 0 || client !== null) {
+      saveDraft({ cart, client, payments, requiresInvoice, notes })
+      setHasDraft(true)
+    }
+  }, [cart, client, payments, requiresInvoice, notes])
 
   useEffect(() => {
     if (cart.length > 0 && payments.length === 1 && payments[0].amount === 0) {
@@ -162,6 +200,7 @@ const SaleView: React.FC = () => {
     setCart([]); setClient(null)
     setPayments([{ method: 'cash', amount: 0, reference: '' }])
     setReqInv(false); setNotes(''); setError(null)
+    clearDraft(); setHasDraft(false)
     // NOTA: setSuccess(null) NO se llama aquí → el banner permanece visible
   }
 
@@ -218,6 +257,7 @@ const SaleView: React.FC = () => {
       // ── FIX: primero mostrar el folio, luego limpiar el carrito ────────
       // handleClear() NO borra successFolio, así el banner queda visible
       const folio = (res.data as { folio: string }).folio
+      clearDraft()           // borrar borrador al confirmar venta exitosa
       handleClear()          // limpia carrito, pagos, etc. (no el banner)
       setSuccess(folio)      // setSuccess DESPUÉS de handleClear → no se pisa
     } catch (e) { setError(String(e)) }
@@ -291,6 +331,20 @@ const SaleView: React.FC = () => {
 
             
           </div>
+
+          {/* ── Banner de borrador restaurado ── */}
+          {/* {hasDraft && cart.length > 0 && (
+            <div className="mx-4 mt-3 rounded-lg px-4 py-2.5 flex items-center justify-between text-xs animate-fade-in"
+                 style={{ background: 'color-mix(in srgb,var(--color-warning) 12%,transparent)', color: 'var(--color-warning)' }}>
+              <span className="flex items-center gap-2">
+                <FileText size={13} />
+                Borrador restaurado — <strong>{cart.length} servicio{cart.length !== 1 ? 's' : ''}</strong> recuperado{cart.length !== 1 ? 's' : ''}
+              </span>
+              <button onClick={handleNewSale} className="opacity-70 hover:opacity-100 text-xs underline ml-3">
+                Descartar
+              </button>
+            </div>
+          )} */}
 
           {/* ── Banner de éxito — persiste hasta que el cajero empiece otra venta ── */}
           {successFolio && (

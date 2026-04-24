@@ -11,6 +11,7 @@ import { registerInvoiceHandlers }      from './invoiceHandlers'
 import { registerCommissionHandlers }   from './commissionHandlers'
 import { registerSettingsHandlers, registerDashboardHandlers } from './settingsHandlers'
 import { registerCalendarHandlers }     from './calendarHandlers'
+import { registerAlertHandlers }        from './alertHandlers'
 
 export function registerAllHandlers(ipcMain: IpcMain) {
   registerAppHandlers(ipcMain)
@@ -25,4 +26,5 @@ export function registerAllHandlers(ipcMain: IpcMain) {
   registerDashboardHandlers(ipcMain)
   registerCalendarHandlers(ipcMain)
   registerWhatsAppHandlers(ipcMain)
+  registerAlertHandlers(ipcMain)
 }

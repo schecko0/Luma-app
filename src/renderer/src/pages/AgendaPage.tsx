@@ -41,40 +41,6 @@ type CalView = 'week' | 'month'
 interface GcStatus { connected: boolean; has_credentials: boolean; connected_at: string | null; calendar_id: string }
 interface WaStatus { status: string; phone: string | null }
 
-// ── Sistema de Alertas ────────────────────────────────────────────────────────
-function playChime() {
-  try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-    const now = ctx.currentTime
-    const osc1 = ctx.createOscillator(); const osc2 = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc1.frequency.setValueAtTime(523.25, now)
-    osc2.frequency.setValueAtTime(659.25, now)
-    gain.gain.setValueAtTime(0, now)
-    gain.gain.linearRampToValueAtTime(0.2, now + 0.1)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
-    osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination)
-    osc1.start(now); osc2.start(now); osc1.stop(now + 1.5); osc2.stop(now + 1.5)
-  } catch (_) {}
-}
-
-function speakAlert(text: string) {
-  if (!window.speechSynthesis) return
-  const u = new SpeechSynthesisUtterance(text)
-  u.lang = 'es-MX'; u.rate = 0.9; u.pitch = 1
-  window.speechSynthesis.speak(u)
-}
-
-function showDesktopNotification(title: string, body: string) {
-  if (Notification.permission === 'granted') {
-    new Notification(title, { body, icon: '/favicon.ico' })
-  } else if (Notification.permission !== 'denied') {
-    Notification.requestPermission().then(p => {
-      if (p === 'granted') new Notification(title, { body })
-    })
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 export const AgendaPage: React.FC = () => {
   const [view, setView]             = useState<CalView>('week')
@@ -96,9 +62,7 @@ export const AgendaPage: React.FC = () => {
   const [cancelConfirm, setCancelConfirm] = useState<{ onConfirm: () => void; type: 'cancel-apt' | 'disconnect-gc' } | null>(null)
   const [pastDateConfirm, setPastDateConfirm] = useState<string | null>(null)
   const [alertsEnabled, setAlerts]  = useState(true)
-  const alertedIds                  = useRef<Set<number>>(new Set())
   const alertTimerRef               = useRef<ReturnType<typeof setInterval> | null>(null)
-  const allAptsRef                  = useRef<Appointment[]>([])
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type })
@@ -119,16 +83,12 @@ export const AgendaPage: React.FC = () => {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const today   = format(new Date(), 'yyyy-MM-dd')
-      const in7days = format(addDays(new Date(), 7), 'yyyy-MM-dd')
-      const [aptRes, alertRes, empRes, gcRes] = await Promise.all([
+      const [aptRes, empRes, gcRes] = await Promise.all([
         window.electronAPI.calendar.listAppointments(rangeFrom, rangeTo),
-        window.electronAPI.calendar.listAppointments(today, in7days),
         window.electronAPI.employees.all(),
         window.electronAPI.calendar.getStatus(),
       ])
       if (aptRes.ok)   setAppts(aptRes.data as Appointment[])
-      if (alertRes.ok) allAptsRef.current = alertRes.data as Appointment[]
       if (empRes.ok)   setEmployees(empRes.data as Employee[])
       if (gcRes.ok)    setGcStatus(gcRes.data as GcStatus)
     } finally { setLoading(false) }
@@ -136,6 +96,10 @@ export const AgendaPage: React.FC = () => {
 
   // Cargar estado de WhatsApp al montar y escuchar cambios en tiempo real
   useEffect(() => {
+    // Sincronizar estado del toggle con la preferencia guardada
+    window.electronAPI.alerts.getEnabled().then((res: any) => {
+      if (res.ok) setAlerts(res.data)
+    })
     window.electronAPI.whatsapp.getStatus().then((res: any) => {
       if (res.ok) setWaStatus(res.data)
     })
@@ -159,32 +123,12 @@ export const AgendaPage: React.FC = () => {
     return () => { unsubUpdate(); unsubAuth() }
   }, [loadAll, loading])
 
-  // Motor de alertas sonoras
+  // Motor de alertas — ahora vive en el main process (startAlertWorker)
+  // Este efecto solo sincroniza el toggle de la UI con el worker
   useEffect(() => {
     if (alertTimerRef.current) clearInterval(alertTimerRef.current)
-    if (!alertsEnabled) {
-      if (window.speechSynthesis) window.speechSynthesis.cancel()
-      return
-    }
-    const checkAlerts = () => {
-      const now = new Date()
-      for (const apt of allAptsRef.current) {
-        const start   = new Date(apt.start_at)
-        const diffMin = Math.round((start.getTime() - now.getTime()) / 60000)
-        if ((diffMin === 15 || diffMin === 5) && !alertedIds.current.has(parseInt(`${apt.id}${diffMin}`))) {
-          alertedIds.current.add(parseInt(`${apt.id}${diffMin}`))
-          playChime()
-          const body = `${apt.service_name || apt.title} ${apt.client_name ? 'para ' + apt.client_name : ''}`
-          showDesktopNotification(`Cita en ${diffMin} min`, body)
-          const voiceText = `Cita en ${diffMin} minutos: ${body}`
-          speakAlert(voiceText)
-          showToast(`🔔 ${voiceText}`, 'success')
-        }
-      }
-    }
-    alertTimerRef.current = setInterval(checkAlerts, 30_000)
-    checkAlerts()
-    return () => { if (alertTimerRef.current) clearInterval(alertTimerRef.current) }
+    window.electronAPI.alerts.setEnabled(alertsEnabled)
+    if (!alertsEnabled && window.speechSynthesis) window.speechSynthesis.cancel()
   }, [alertsEnabled])
 
   const prev    = () => setCurrent(v => view === 'week' ? subWeeks(v, 1) : subMonths(v, 1))

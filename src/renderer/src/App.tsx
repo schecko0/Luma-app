@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BrowserRouter, Routes,  Navigate, HashRouter, Route } from 'react-router-dom'
 import { Sidebar }          from './components/layout/Sidebar'
 import { Titlebar }         from './components/layout/Titlebar'
@@ -14,8 +14,42 @@ import { AgendaPage }       from './pages/AgendaPage'
 import { SettingsPage, HelpPage } from './pages/index'
 import { useAppState }      from './hooks/useAppState'
 
+// ── Audio helpers (viven aquí para estar siempre montados) ────────────────────
+function playChime() {
+  try {
+    const ctx  = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const now  = ctx.currentTime
+    const osc1 = ctx.createOscillator()
+    const osc2 = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc1.frequency.setValueAtTime(523.25, now)
+    osc2.frequency.setValueAtTime(659.25, now)
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.1)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5)
+    osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination)
+    osc1.start(now); osc2.start(now); osc1.stop(now + 1.5); osc2.stop(now + 1.5)
+  } catch (_) {}
+}
+
+function speakAlert(text: string) {
+  if (!window.speechSynthesis) return
+  const u = new SpeechSynthesisUtterance(text)
+  u.lang = 'es-MX'; u.rate = 0.9; u.pitch = 1
+  window.speechSynthesis.speak(u)
+}
+
 export default function App() {
   const { isAdmin, sidebarCollapsed, setSidebarCollapsed, salonName, salonLogo, refreshSettings } = useAppState()
+
+  // ── Listener global de alertas — funciona en cualquier módulo ────────────────
+  useEffect(() => {
+    const unsub = window.electronAPI.alerts.onAlert(({ body, diffMin }) => {
+      playChime()
+      speakAlert(`Cita en ${diffMin} minutos: ${body}`)
+    })
+    return () => unsub()
+  }, [])
 
   return (
     <HashRouter>

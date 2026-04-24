@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronUp, Eye, EyeOff, ShieldCheck,
   Database, Download, Upload, FileText, History, Terminal,
   AlertTriangle, Trash2, Info, Activity, MessageCircle, Wifi, WifiOff, Send, Clock, ToggleLeft, ToggleRight,
-  Percent, Users, RotateCcw,
+  Percent, Users, RotateCcw, Bell, BellOff,
 } from 'lucide-react'
 
 import { PageHeader, Spinner, Paginator, Badge } from '../components/ui/index'
@@ -68,8 +68,9 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
   const [rawLogs, setRawLogs]     = useState<string | null>(null)
   const [selectedError, setSelectedError] = useState<ErrorLog | null>(null)
   const [showImportConfirm, setShowImportConfirm] = useState(false)
-  const [showClearConfirm, setShowClearConfirm] = useState(false)
-  const [successMsg, setSuccessMsg] = useState<{ title: string; body: string } | null>(null)
+  const [showClearConfirm, setShowClearConfirm]   = useState(false)
+  const [successMsg, setSuccessMsg]               = useState<{ title: string; body: string } | null>(null)
+  const [alertsEnabled, setAlertsEnabled]         = useState(true)
 
   // ── Estados WhatsApp ───────────────────────────────────────────────────────
   const [waStatus, setWaStatus]       = useState<string>('disconnected')
@@ -140,6 +141,10 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         }))
       }
       setLoading(false)
+    })
+    // Cargar preferencia de alertas desde el main process
+    window.electronAPI.alerts.getEnabled().then((res: any) => {
+      if (res.ok) setAlertsEnabled(res.data)
     })
   }, [])
 
@@ -546,6 +551,37 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
                   El {form.tax_label || 'impuesto'} del {form.tax_rate || 0}% solo aplica cuando el cajero activa
                   "Requiere factura oficial" en el POS.
                 </div>
+              </Section>
+
+              <Section title="Alertas de citas" icon={<Bell size={16} />}>
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Alertas sonoras de citas próximas</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                      Suena un chime y voz cuando una cita se acerca a <strong>15 min</strong> y <strong>5 min</strong>.
+                      Funciona en cualquier módulo de la app, incluso sin estar en Agenda.
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const next = !alertsEnabled
+                      setAlertsEnabled(next)
+                      await window.electronAPI.alerts.setEnabled(next)
+                    }}
+                    className="flex-shrink-0 ml-4"
+                    title={alertsEnabled ? 'Desactivar alertas' : 'Activar alertas'}>
+                    {alertsEnabled
+                      ? <ToggleRight size={32} style={{ color: 'var(--color-success)' }} />
+                      : <ToggleLeft  size={32} style={{ color: 'var(--color-text-muted)' }} />}
+                  </button>
+                </div>
+                {!alertsEnabled && (
+                  <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                       style={{ background: 'color-mix(in srgb,var(--color-warning) 10%,transparent)', color: 'var(--color-warning)' }}>
+                    <BellOff size={13} />
+                    Las alertas están desactivadas. No sonarán avisos de citas próximas.
+                  </div>
+                )}
               </Section>
             </>
           )}
@@ -1159,6 +1195,15 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
                       </button>
                       <button onClick={viewRawLogs} className="luma-btn-ghost py-1 text-[10px]">
                         <FileText size={12} /> Ver archivo
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const res = await window.electronAPI.downloadLogs()
+                          if (!res.ok && res.error !== 'Cancelado') setError(res.error || 'Error al descargar')
+                        }}
+                        className="luma-btn-ghost py-1 text-[10px]"
+                        title="Guarda una copia del log en la ubicación que elijas">
+                        <Download size={12} /> Descargar log
                       </button>
                     </div>
                   </div>
