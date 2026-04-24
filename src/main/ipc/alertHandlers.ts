@@ -8,19 +8,17 @@ let alertTimer:   ReturnType<typeof setInterval> | null = null
 let alertEnabled  = true
 const alertedIds  = new Set<string>()  // clave: `${apt_id}_${diffMin}`
 
-// ── Query de citas próximas (solo las de hoy + mañana para no sobrecargar) ───
+// ── Query de citas próximas ────────────────────────────────────────────────────
 function getUpcomingAppointments() {
   try {
     const db  = getDb()
     const now = new Date()
-    // Ventana: desde ahora hasta 20 minutos adelante
-    const from = now.toISOString()
-    const to   = new Date(now.getTime() + 20 * 60 * 1000).toISOString()
+    // Ventana amplia: de 4 a 16 minutos adelante
+    // Cubre los umbrales de 5 y 15 min con margen para el intervalo de 30s
+    const from = new Date(now.getTime() +  4 * 60 * 1000).toISOString()
+    const to   = new Date(now.getTime() + 16 * 60 * 1000).toISOString()
     return db.prepare(`
-      SELECT
-        a.id,
-        a.start_at,
-        a.title,
+      SELECT a.id, a.start_at, a.title,
         c.first_name || ' ' || c.last_name AS client_name
       FROM appointments a
       LEFT JOIN clients c ON c.id = a.client_id
@@ -61,30 +59,27 @@ function checkAlerts() {
 
   for (const apt of apts) {
     const start   = new Date(apt.start_at)
-    const diffMin = Math.round((start.getTime() - now.getTime()) / 60_000)
+    const diffMin = (start.getTime() - now.getTime()) / 60_000  // decimal, sin redondear
 
-    if (diffMin !== 15 && diffMin !== 5) continue
+    // Umbral de 15 min: entre 14.5 y 15.5 minutos
+    // Umbral de 5 min:  entre  4.5 y  5.5 minutos
+    // El worker corre cada 30s — un rango de ±0.5 min garantiza que no se escape ningún evento
+    const threshold = diffMin >= 14.5 && diffMin < 15.5 ? 15
+                    : diffMin >=  4.5 && diffMin <  5.5 ?  5
+                    : null
+    if (threshold === null) continue
 
-    const key = `${apt.id}_${diffMin}`
+    const key = `${apt.id}_${threshold}`
     if (alertedIds.has(key)) continue
     alertedIds.add(key)
 
-    const body = apt.client_name
-      ? `${apt.title} para ${apt.client_name}`
-      : apt.title
+    const body = apt.client_name ? `${apt.title} para ${apt.client_name}` : apt.title
 
-    // Notificación nativa del OS (funciona en segundo plano, minimizado, etc.)
     if (Notification.isSupported()) {
-      new Notification({
-        title: `Cita en ${diffMin} min`,
-        body,
-        silent: true,   // el audio lo maneja el renderer con Web Audio API
-      }).show()
+      new Notification({ title: `Cita en ${threshold} min`, body, silent: true }).show()
     }
 
-    // Pedirle al renderer que reproduzca el chime + voz
-    notifyRenderer({ title: `Cita en ${diffMin} min`, body, diffMin })
-
+    notifyRenderer({ title: `Cita en ${threshold} min`, body, diffMin: threshold })
     logger.info(`[AlertWorker] Alerta disparada: ${key} — ${body}`)
   }
 }

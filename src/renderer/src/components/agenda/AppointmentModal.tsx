@@ -175,6 +175,7 @@ export const AppointmentModal: React.FC<Props> = ({
   const [saving, setSaving]     = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError]       = useState<string | null>(null)
+  const [overlapWarning, setOverlapWarning] = useState<string | null>(null)
   const [endDayWarning, setEndDayWarning] = useState(false)
   const [waPreviewOpen, setWaPreviewOpen] = useState(false)
   const [pastStartWarning, setPastStartWarning] = useState(false)
@@ -224,17 +225,36 @@ export const AppointmentModal: React.FC<Props> = ({
     }
     setError(null)
     setEndDayWarning(false)
+    setOverlapWarning(null)
   }, [isOpen, initial, defaultStart, employees, clients, services])
 
   // Auto-título: solo si el campo está vacío
   useEffect(() => {
-    if (form.title && initial?.title !== form.title) return // título ya fue editado manualmente
+    if (form.title && initial?.title !== form.title) return
     const parts = [
       selected.service ? selected.service.label.split('(')[0].trim() : null,
       selected.client  ? selected.client.label : null,
     ].filter(Boolean)
     if (parts.length > 0) setForm(prev => ({ ...prev, title: parts.join(' — ') }))
   }, [selected.service?.id, selected.client?.id])
+
+  // Check de overlap — alertante (no bloqueante), corre en background al cambiar empleado/hora
+  useEffect(() => {
+    if (!form.employee_id || !form.start_at || !form.end_at) { setOverlapWarning(null); return }
+    const startISO = new Date(form.start_at).toISOString()
+    const endISO   = new Date(form.end_at).toISOString()
+    window.electronAPI.calendar.checkOverlaps(
+      form.employee_id, startISO, endISO, initial?.id
+    ).then((res: any) => {
+      if (res.ok && res.data?.length > 0) {
+        const first = res.data[0]
+        const time  = first.start_at ? new Date(first.start_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''
+        setOverlapWarning(`${selected.employee?.label ?? 'El empleado'} ya tiene una cita a las ${time}: "${first.title}"`)
+      } else {
+        setOverlapWarning(null)
+      }
+    }).catch(() => setOverlapWarning(null))
+  }, [form.employee_id, form.start_at, form.end_at])
 
   const set = <K extends keyof AppointmentFormData>(k: K, v: AppointmentFormData[K]) => {
     setForm(prev => ({ ...prev, [k]: v }))
@@ -313,6 +333,7 @@ export const AppointmentModal: React.FC<Props> = ({
         start_at:     new Date(form.start_at).toISOString(),
         end_at:       new Date(form.end_at).toISOString(),
         color:        form.color,
+        force:        true,   // overlaps son alertas, no bloqueos
       }
       const res = initial
         ? await window.electronAPI.calendar.updateAppointment(initial.id, payload)
@@ -388,6 +409,13 @@ export const AppointmentModal: React.FC<Props> = ({
           <div className="rounded-lg px-3 py-2 text-xs"
                style={{ background: 'color-mix(in srgb,var(--color-warning) 12%,transparent)', color: 'var(--color-warning)' }}>
             ⚠️ El servicio excedería la medianoche. La hora de fin se ajustó a las 23:30 del mismo día.
+          </div>
+        )}
+        {overlapWarning && (
+          <div className="rounded-lg px-3 py-2 text-xs flex items-center gap-2"
+               style={{ background: 'color-mix(in srgb,var(--color-warning) 10%,transparent)', color: 'var(--color-warning)' }}>
+            <AlertCircle size={12} className="flex-shrink-0" />
+            <span><strong>Posible empalme:</strong> {overlapWarning}. Puedes continuar de todas formas.</span>
           </div>
         )}
         {pastStartWarning && (

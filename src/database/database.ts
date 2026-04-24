@@ -60,6 +60,7 @@ function runMigrations() {
   if (current < 9) applyMigration9()   // ← Motor de comisiones: modo + overhead
   if (current < 10) applyMigration10()  // ← Papelera de citas + auditoría de cancelaciones
   if (current < 11) applyMigration11()  // ← gc_updated_at en appointments + gc_sync_token en settings
+  if (current < 12) applyMigration12()  // ← Normalizar fechas a UTC puro en appointments
 }
 
 function getCurrentVersion(): number {
@@ -687,6 +688,46 @@ function applyMigration10() {
 //                  eliminados desde ese momento. Ultra rápido vs. poll completo.
 //                  Si el token expira (410 Gone), se borra y se hace full pull.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 12 — Normalizar fechas a UTC puro
+//
+// Los eventos importados de Google Calendar tienen start_at/end_at en formato
+// con offset de zona: '2026-04-24T15:30:00-06:00'. SQLite los trata como
+// strings y las comparaciones con fechas UTC fallan silenciosamente.
+//
+// Esta migración lee cada fila, parsea la fecha con strftime de SQLite
+// (que entiende offsets) y la reescribe en UTC ISO 8601 puro.
+// Ej: '2026-04-24T15:30:00-06:00' → '2026-04-24T21:30:00.000Z'
+//
+// También normaliza cancelled_appointments.snapshot_start_at/snapshot_end_at
+// por el mismo motivo.
+// ─────────────────────────────────────────────────────────────────────────────
+function applyMigration12() {
+  log('Aplicando migración 12: normalizando fechas a UTC...')
+
+  // strftime('%Y-%m-%dT%H:%M:%S.000Z', col) convierte cualquier ISO con offset a UTC
+  db.exec(`
+    UPDATE appointments
+    SET
+      start_at = strftime('%Y-%m-%dT%H:%M:%S.000Z', start_at),
+      end_at   = strftime('%Y-%m-%dT%H:%M:%S.000Z', end_at)
+    WHERE
+      start_at IS NOT NULL
+      AND end_at IS NOT NULL;
+
+    UPDATE cancelled_appointments
+    SET
+      snapshot_start_at = strftime('%Y-%m-%dT%H:%M:%S.000Z', snapshot_start_at),
+      snapshot_end_at   = strftime('%Y-%m-%dT%H:%M:%S.000Z', snapshot_end_at)
+    WHERE
+      snapshot_start_at IS NOT NULL
+      AND snapshot_end_at IS NOT NULL;
+  `)
+
+  setVersion(12)
+  log('Migración 12 completada.')
+}
+
 function applyMigration11() {
   log('Aplicando migración 11: gc_updated_at + gc_sync_token...')
   const migrate = db.transaction(() => {

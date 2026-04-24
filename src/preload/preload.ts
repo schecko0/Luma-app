@@ -155,6 +155,7 @@ const api = {
     disconnect:         () => ipcRenderer.invoke('calendar:disconnect'),
     listCalendars:      () => ipcRenderer.invoke('calendar:listCalendars'),
     listAppointments:   (dateFrom: string, dateTo: string) => ipcRenderer.invoke('calendar:listAppointments', dateFrom, dateTo),
+    checkOverlaps:      (employeeId: number, startAt: string, endAt: string, excludeId?: number) => ipcRenderer.invoke('calendar:checkOverlaps', employeeId, startAt, endAt, excludeId),
     createAppointment:  (data: {
       employee_id: number | null; client_id: number | null; service_id: number | null
       title: string; description?: string

@@ -7,6 +7,15 @@ import { getDb } from '../../database/database'
 import { nowISO } from '../../database/dbUtils'
 import type { Appointment } from '../../renderer/src/types'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// toUTC — normaliza cualquier string de fecha a UTC ISO 8601 puro
+// Acepta: '2026-04-24T15:30:00-06:00', '2026-04-24T21:30:00.000Z', '2026-04-24'
+// Devuelve siempre: '2026-04-24T21:30:00.000Z'
+// ─────────────────────────────────────────────────────────────────────────────
+function toUTC(dateStr: string): string {
+  return new Date(dateStr).toISOString()
+}
+
 const OAUTH_PORT   = 3737
 const REDIRECT_URI = `http://localhost:${OAUTH_PORT}/callback`
 const SCOPES       = ['https://www.googleapis.com/auth/calendar']
@@ -149,8 +158,8 @@ async function pullFromGoogle(
           snapshotStmt.run(
             row.id,
             ev.summary ?? '(sin título)',
-            ev.start?.dateTime ?? ev.start?.date ?? now,
-            ev.end?.dateTime   ?? ev.end?.date   ?? now,
+            ev.start?.dateTime ? toUTC(ev.start.dateTime) : ev.start?.date ?? now,
+            ev.end?.dateTime   ? toUTC(ev.end.dateTime)   : ev.end?.date   ?? now,
             ev.description ?? null, null, ev.start?.date ? 1 : 0, ev.id, now
           )
           cancelled++
@@ -159,8 +168,12 @@ async function pullFromGoogle(
       }
 
       if (!ev.summary) continue
-      const startAt = ev.start?.dateTime ?? (ev.start?.date ? ev.start.date + 'T00:00:00' : null)
-      const endAt   = ev.end?.dateTime   ?? (ev.end?.date   ? ev.end.date   + 'T00:00:00' : null)
+      const startAt = ev.start?.dateTime
+        ? toUTC(ev.start.dateTime)
+        : ev.start?.date ? toUTC(ev.start.date + 'T00:00:00') : null
+      const endAt = ev.end?.dateTime
+        ? toUTC(ev.end.dateTime)
+        : ev.end?.date ? toUTC(ev.end.date + 'T00:00:00') : null
       if (!startAt || !endAt) continue
 
       const gcUpdated = ev.updated ?? null
@@ -270,12 +283,14 @@ async function pushToGoogle(appointmentId: number): Promise<void> {
   const calId = getSalonCalendarId()
   const now   = nowISO()
 
-  const description = [
-    apt.client_name   ? `Cliente: ${apt.client_name}`    : null,
-    apt.service_name  ? `Servicio: ${apt.service_name}`  : null,
-    apt.employee_name ? `Empleado: ${apt.employee_name}` : null,
-    apt.description   ?? null,
-  ].filter(Boolean).join('\n')
+  const LUMA_META_SEPARATOR = '---luma---'
+
+  // Solo las notas del usuario — limpiar cualquier metadato previo de Luma
+  const userNotes = apt.description
+    ? apt.description.split(LUMA_META_SEPARATOR)[0].trim()
+    : ''
+
+  const description = userNotes || undefined
 
   const eventBody = {
     summary:     apt.title,
@@ -902,6 +917,10 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
     try {
       const db = getDb()
       if (!db.prepare('SELECT id FROM google_oauth_tokens WHERE id=1').get()) return { ok: false, error: 'No conectado.' }
+
+      const oauth2 = buildOAuthClient()
+      if (!loadTokens(oauth2)) return { ok: false, error: 'No conectado.' }
+
       const pending = db.prepare("SELECT id FROM appointments WHERE sync_status='pending_sync' ORDER BY updated_at ASC LIMIT 50").all() as { id: number }[]
       let synced = 0; let errors = 0
       for (const row of pending) { 
@@ -917,7 +936,23 @@ export function registerCalendarHandlers(ipcMain: IpcMain) {
           }
         } 
       }
-      return { ok: true, data: { synced, errors, total: pending.length } }
+      // 2. PULL: cambios de Google → DB local
+      // Incluir pull al sincronizar manualmente garantiza que ediciones/
+      // cancelaciones hechas en Google se reflejen inmediatamente.
+      let pullResult = { imported: 0, updated: 0, cancelled: 0, mode: 'incremental' as const }
+      try {
+        pullResult = await pullFromGoogle(oauth2)
+        if (pullResult.imported > 0 || pullResult.updated > 0 || pullResult.cancelled > 0)
+          BrowserWindow.getAllWindows().forEach(win => win.webContents.send('calendar:updated'))
+      } catch (e: any) {
+        if (handleAuthError(e))
+          return { ok: false, error: 'La sesión de Google ha caducado. Por favor, vuelve a conectar la cuenta.' }
+        logger.error('Error en pull durante sync manual', e)
+      }
+
+      return { ok: true, data: { synced, errors, total: pending.length,
+        pulled: pullResult.imported + pullResult.updated + pullResult.cancelled,
+        pullMode: pullResult.mode } }
     } catch (e: unknown) { 
       logger.error('Error general en el proceso de sincronización manual', e)
       return { ok: false, error: String(e).replace('Error: ', '') } 
