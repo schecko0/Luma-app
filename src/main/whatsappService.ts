@@ -18,6 +18,8 @@ let waClient: Client | null = null
 let waStatus: 'disconnected' | 'connecting' | 'qr' | 'ready' | 'error' = 'disconnected'
 let waPhone: string | null = null
 let cronJob: ScheduledTask | null = null
+let qrTimeoutHandle: ReturnType<typeof setTimeout> | null = null  // Auto-destruir si nadie escanea
+let isInitializing = false  // Guard: evitar dos inicializaciones en paralelo
 
 // Cola anti-spam: mensajes pendientes de enviar con delay
 const sendQueue: Array<{ phone: string; message: string; logId: number }> = []
@@ -471,6 +473,10 @@ export function startWhatsAppScheduler() {
  * Se usa cuando el usuario se desconecta manualmente o cuando la sesión expira.
  */
 async function performFullWACleanup(reason?: string) {
+  // Resetear el guard de inicialización para que futuros intentos puedan proceder
+  isInitializing = false
+  if (qrTimeoutHandle) { clearTimeout(qrTimeoutHandle); qrTimeoutHandle = null }
+
   if (waClient) {
     try {
       await waClient.logout().catch(() => {})
@@ -516,10 +522,26 @@ async function performFullWACleanup(reason?: string) {
 // CONEXIÓN: iniciar cliente WhatsApp y manejar eventos
 // ─────────────────────────────────────────────────────────────────────────────
 export async function initWhatsAppClient(): Promise<void> {
+  // Guard: si ya hay una inicialización en curso, no lanzar otra en paralelo
+  if (isInitializing) {
+    logger.warn('[WA] initWhatsAppClient llamado mientras ya se estaba inicializando — ignorado.')
+    return
+  }
+  isInitializing = true
+
+  // Destruir cliente previo de forma segura antes de crear uno nuevo
+  if (waClient) {
+    logger.info('[WA] Destruyendo cliente previo...')
+    try { await waClient.destroy() } catch (_) { /* ignorar errores de destrucción */ }
+    waClient = null
+    // Pausa breve para dar tiempo al proceso de Chromium a cerrarse completamente
+    await new Promise(r => setTimeout(r, 1500))
+  }
+
   return new Promise(async (resolve, reject) => {
-    if (waClient) {
-      waClient.destroy().catch(() => {})
-      waClient = null
+    const done = (err?: Error) => {
+      isInitializing = false
+      err ? reject(err) : resolve()
     }
 
     waStatus = 'connecting'
@@ -631,10 +653,22 @@ export async function initWhatsAppClient(): Promise<void> {
       notifyRenderer('whatsapp:qr', { qr })
       notifyRenderer('whatsapp:status', { status: 'qr' })
       logger.info('[WA] QR generado — esperando escaneo')
+
+      // Reiniciar el timeout cada vez que llega un QR nuevo.
+      // Si en 3 minutos nadie escanea, destruir el cliente silenciosamente.
+      if (qrTimeoutHandle) clearTimeout(qrTimeoutHandle)
+      qrTimeoutHandle = setTimeout(async () => {
+        if (waStatus === 'qr') {
+          logger.warn('[WA] QR no escaneado en 3 minutos — cerrando cliente.')
+          await performFullWACleanup('QR no escaneado — timeout de 3 minutos')
+        }
+      }, 3 * 60 * 1000)
     })
 
     waClient.on('ready', async () => {
       waStatus = 'ready'
+      // Sesion establecida: cancelar el timeout de QR si estaba activo
+      if (qrTimeoutHandle) { clearTimeout(qrTimeoutHandle); qrTimeoutHandle = null }
       try {
         const info  = waClient!.info
         waPhone     = info?.wid?.user ?? null
@@ -650,7 +684,7 @@ export async function initWhatsAppClient(): Promise<void> {
       } catch (err) {
         logger.error('[WA] Error al obtener info del cliente', err)
       }
-      resolve()
+      done()
     })
 
     waClient.on('authenticated', () => {
@@ -661,7 +695,7 @@ export async function initWhatsAppClient(): Promise<void> {
     waClient.on('auth_failure', (msg) => {
       logger.error('[WA] Fallo de autenticación:', msg)
       performFullWACleanup(`Error de autenticación: ${msg}`)
-      reject(new Error(msg))
+      done(new Error(msg))
     })
 
     waClient.on('disconnected', (reason) => {
@@ -669,11 +703,26 @@ export async function initWhatsAppClient(): Promise<void> {
       performFullWACleanup(`Sesión cerrada: ${reason}`)
     })
 
-    waClient.initialize().catch(err => {
-      waStatus = 'error'
-      notifyRenderer('whatsapp:status', { status: 'error', error: err.message })
-      logger.error('[WA] Error al inicializar cliente:', err)
-      reject(err)
+    waClient.initialize().catch(async err => {
+      const errName = err?.name ?? ''
+      const isTargetClose = errName === 'TargetCloseError' || String(err).includes('TargetCloseError')
+
+      if (isTargetClose) {
+        // TargetCloseError: el proceso de Chromium fue cerrado antes de tiempo.
+        // Ocurre frecuentemente en Mac cuando webVersionCache descarga el HTML.
+        // Destruir el cliente colgado, esperar y reintentar una sola vez.
+        logger.warn('[WA] TargetCloseError detectado — reintentando en 3 segundos...')
+        try { await waClient?.destroy() } catch (_) {}
+        waClient = null
+        await new Promise(r => setTimeout(r, 3000))
+        isInitializing = false  // Reset para permitir el reintento
+        initWhatsAppClient().then(() => done()).catch(e => done(e))
+      } else {
+        waStatus = 'error'
+        notifyRenderer('whatsapp:status', { status: 'error', error: err.message })
+        logger.error('[WA] Error al inicializar cliente:', err)
+        done(err)
+      }
     })
   })
 }

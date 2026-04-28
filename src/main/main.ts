@@ -153,9 +153,18 @@ app.whenReady().then(async () => {
   startSyncWorker()
   startAlertWorker()
   try {
-    const row = getDb().prepare("SELECT value FROM settings WHERE key='wa_enabled'").get() as { value: string } | undefined
-    if (row?.value === 'true') {
+    const db = getDb()
+    const enabledRow = db.prepare("SELECT value FROM settings WHERE key='wa_enabled'").get() as { value: string } | undefined
+    const phoneRow   = db.prepare("SELECT value FROM settings WHERE key='wa_phone'").get()   as { value: string } | undefined
+    // Solo reconectar si hay una sesión previa real (wa_phone conocido)
+    // Si wa_phone está vacío, el usuario nunca escaneó el QR → no iniciar
+    if (enabledRow?.value === 'true' && phoneRow?.value) {
       initWhatsAppClient().catch(err => logger.warn('[Main] WhatsApp reconexión fallida:', err))
+    } else if (enabledRow?.value === 'true' && !phoneRow?.value) {
+      // Limpiar flag huérfano para no intentar reconectar en futuros arranques
+      db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wa_enabled', 'false', datetime('now'))")
+        .run()
+      logger.warn('[Main] WhatsApp: wa_enabled=true pero sin teléfono registrado — flag limpiado.')
     }
   } catch (err) {
     logger.warn('[Main] No se pudo reconectar WhatsApp:', err)

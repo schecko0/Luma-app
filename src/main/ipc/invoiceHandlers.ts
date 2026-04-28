@@ -249,10 +249,17 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
     try {
       const db = getDb()
       const { page = 1, pageSize = 20, search = '', status, dateFrom, dateTo,
-              requiresOfficial, registerId, clientSearch } = params
+              requiresOfficial, registerId, clientSearch, sortBy, sortDir } = params
       const offset = (page - 1) * pageSize
       const filters: string[] = []
       const args: unknown[]   = []
+
+      const allowedSort: Record<string, string> = {
+        folio:      'i.folio',
+        created_at: 'i.created_at',
+      }
+      const orderCol = allowedSort[sortBy ?? ''] ?? 'i.created_at'
+      const orderDir = sortDir === 'asc' ? 'ASC' : 'DESC'
 
       if (search) {
         filters.push('(i.folio LIKE ? OR c.first_name LIKE ? OR c.last_name LIKE ?)')
@@ -279,7 +286,7 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
         LEFT JOIN clients c ON c.id = i.client_id
         LEFT JOIN users u   ON u.id = i.created_by
         ${where}
-        ORDER BY i.created_at DESC
+        ORDER BY ${orderCol} ${orderDir}
         LIMIT ? OFFSET ?
       `).all(...args, pageSize, offset) as (Invoice & { payment_methods_list: string })[]
 

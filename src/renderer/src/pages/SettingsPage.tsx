@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Settings, Save, Loader2, Store, DollarSign, Palette,
   Calendar, Check, AlertCircle, RefreshCw, ExternalLink,
@@ -90,6 +90,7 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
   const [showWaDisconnectConfirm, setShowWaDisconnectConfirm] = useState(false)
   const [waLogoPreview, setWaLogoPreview] = useState<string | null>(null)
   const [waLogoFullscreen, setWaLogoFullscreen] = useState(false)
+  const waConnectCleanupRef = useRef<(() => void) | null>(null)
 
   // ── Estados Papelera ──────────────────────────────────────────────────────
   const [trashRows, setTrashRows]       = useState<any[]>([])
@@ -245,6 +246,18 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
     setWaConnecting(true); setWaQr(null)
     await window.electronAPI.whatsapp.connect()
 
+    // Guardar cleanup en ref para que el botón Cancelar pueda llamarla
+    let cleaned = false
+    const cleanup = (unsubQr: () => void, unsubStatus: () => void, poll: ReturnType<typeof setInterval>, safetyTimer: ReturnType<typeof setTimeout>) => {
+      if (cleaned) return
+      cleaned = true
+      clearInterval(poll)
+      clearTimeout(safetyTimer)
+      unsubQr()
+      unsubStatus()
+      setWaConnecting(false)
+    }
+
     // Activar listeners SOLO durante el proceso de conexion
     const unsubQr = window.electronAPI.whatsapp.onQr((data: any) => {
       setWaQr(data.qr); setWaStatus('qr')
@@ -255,14 +268,11 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
       if (data.phone) setWaPhone(data.phone)
       if (data.status === 'ready') {
         setWaQr(null)
-        setWaConnecting(false)
-        unsubQr()
-        unsubStatus()
+        cleanup(unsubQr, unsubStatus, poll, safetyTimer)
       }
       if (data.status === 'error' || data.status === 'disconnected') {
-        setWaConnecting(false)
-        unsubQr()
-        unsubStatus()
+        setWaQr(null)
+        cleanup(unsubQr, unsubStatus, poll, safetyTimer)
       }
     })
 
@@ -273,26 +283,34 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         setWaStatus('ready')
         setWaPhone(res.data.phone)
         setWaQr(null)
-        setWaConnecting(false)
-        clearInterval(poll)
-        unsubQr()
-        unsubStatus()
+        cleanup(unsubQr, unsubStatus, poll, safetyTimer)
       }
-      if (res.ok && res.data.status === 'error') {
-        setWaConnecting(false)
-        clearInterval(poll)
-        unsubQr()
-        unsubStatus()
+      if (res.ok && (res.data.status === 'error' || res.data.status === 'disconnected')) {
+        setWaQr(null)
+        cleanup(unsubQr, unsubStatus, poll, safetyTimer)
       }
     }, 2000)
 
-    // Timeout de seguridad: maximo 2 minutos
-    setTimeout(() => {
-      clearInterval(poll)
-      setWaConnecting(false)
-      unsubQr()
-      unsubStatus()
-    }, 120_000)
+    // Timeout de seguridad: maximo 3 minutos (igual que el backend)
+    const safetyTimer = setTimeout(() => {
+      cleanup(unsubQr, unsubStatus, poll, safetyTimer)
+    }, 3 * 60_000)
+
+    // Exponer cleanup para que el botón Cancelar lo pueda invocar
+    waConnectCleanupRef.current = () => {
+      cleanup(unsubQr, unsubStatus, poll, safetyTimer)
+    }
+  }
+
+  const handleWaCancel = async () => {
+    // 1. Limpiar listeners y polling del frontend
+    waConnectCleanupRef.current?.()
+    waConnectCleanupRef.current = null
+    // 2. Ordenar al backend que destruya el cliente de puppeteer
+    await window.electronAPI.whatsapp.disconnect()
+    setWaStatus('disconnected')
+    setWaQr(null)
+    setWaConnecting(false)
   }
 
   const handleWaDisconnect = async () => {
@@ -769,10 +787,18 @@ export const SettingsPage: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
                   {waStatus === 'ready'
                     ? <button onClick={() => setShowWaDisconnectConfirm(true)} className="luma-btn-ghost text-xs"
                               style={{ color: 'var(--color-danger)' }}>Desvincular</button>
-                    : <button onClick={handleWaConnect} disabled={waConnecting} className="luma-btn-primary text-xs">
-                        {waConnecting ? <><Loader2 size={12} className="animate-spin" /> Iniciando...</>
-                                    : 'Vincular WhatsApp'}
-                      </button>
+                    : <div className="flex gap-2">
+                        <button onClick={handleWaConnect} disabled={waConnecting} className="luma-btn-primary text-xs">
+                          {waConnecting ? <><Loader2 size={12} className="animate-spin" /> Iniciando...</>
+                                      : 'Vincular WhatsApp'}
+                        </button>
+                        {waConnecting && (
+                          <button onClick={handleWaCancel} className="luma-btn-ghost text-xs"
+                                  style={{ color: 'var(--color-danger)' }}>
+                            Cancelar
+                          </button>
+                        )}
+                      </div>
                   }
                 </div>
 

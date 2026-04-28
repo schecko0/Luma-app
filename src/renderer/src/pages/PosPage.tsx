@@ -332,19 +332,7 @@ const SaleView: React.FC = () => {
             
           </div>
 
-          {/* ── Banner de borrador restaurado ── */}
-          {/* {hasDraft && cart.length > 0 && (
-            <div className="mx-4 mt-3 rounded-lg px-4 py-2.5 flex items-center justify-between text-xs animate-fade-in"
-                 style={{ background: 'color-mix(in srgb,var(--color-warning) 12%,transparent)', color: 'var(--color-warning)' }}>
-              <span className="flex items-center gap-2">
-                <FileText size={13} />
-                Borrador restaurado — <strong>{cart.length} servicio{cart.length !== 1 ? 's' : ''}</strong> recuperado{cart.length !== 1 ? 's' : ''}
-              </span>
-              <button onClick={handleNewSale} className="opacity-70 hover:opacity-100 text-xs underline ml-3">
-                Descartar
-              </button>
-            </div>
-          )} */}
+          
 
           {/* ── Banner de éxito — persiste hasta que el cajero empiece otra venta ── */}
           {successFolio && (
@@ -684,11 +672,14 @@ const InvoiceHistoryView: React.FC = () => {
   const [result, setResult]           = useState<PaginatedResult<Invoice> | null>(null)
   const [loading, setLoading]         = useState(true)
   const [page, setPage]               = useState(1)
+  const [pageSize, setPageSize]       = useState(20)
   const [filterStatus, setStatus]     = useState('')
   const [dateFrom, setDateFrom]       = useState('')
   const [dateTo, setDateTo]           = useState('')
   const [onlyOfficial, setOfficial]   = useState(false)
   const [clientSearch, setClientSrch] = useState('')
+  const [sortBy, setSortBy]           = useState<'folio' | 'created_at'>('created_at')
+  const [sortDir, setSortDir]         = useState<'asc' | 'desc'>('desc')
   const [detailInvoice, setDetail]    = useState<Invoice | null>(null)
   const [cancelModal, setCancelModal] = useState<Invoice | null>(null)
   const [cancelReason, setCancelReason] = useState('')
@@ -697,17 +688,29 @@ const InvoiceHistoryView: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true)
     const res = await window.electronAPI.invoices.list({
-      page, pageSize: 20, status: filterStatus || undefined,
+      page, pageSize, status: filterStatus || undefined,
       dateFrom: dateFrom || undefined, dateTo: dateTo || undefined,
       requiresOfficial: onlyOfficial || undefined,
       clientSearch: clientSearch || undefined,
+      sortBy, sortDir,
     })
     if (res.ok) setResult(res.data as PaginatedResult<Invoice>)
     setLoading(false)
-  }, [page, filterStatus, dateFrom, dateTo, onlyOfficial, clientSearch])
+  }, [page, pageSize, filterStatus, dateFrom, dateTo, onlyOfficial, clientSearch, sortBy, sortDir])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [filterStatus, dateFrom, dateTo, onlyOfficial, clientSearch])
+  useEffect(() => { setPage(1) }, [filterStatus, dateFrom, dateTo, onlyOfficial, clientSearch, pageSize])
+
+  const toggleSort = (col: 'folio' | 'created_at') => {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortBy(col); setSortDir('desc') }
+    setPage(1)
+  }
+
+  const SortIcon = ({ col }: { col: 'folio' | 'created_at' }) => {
+    if (sortBy !== col) return <span style={{ opacity: 0.3, fontSize: 10 }}>↕</span>
+    return <span style={{ fontSize: 10 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
+  }
 
   const openDetail = async (inv: Invoice) => {
     const res = await window.electronAPI.invoices.getById(inv.id)
@@ -723,7 +726,7 @@ const InvoiceHistoryView: React.FC = () => {
   }
 
   return (
-    <div className="p-6 flex flex-col gap-4 h-full overflow-auto">
+    <div className="p-6 flex flex-col gap-4 h-full overflow-hidden">
       <div className="flex items-center gap-3 flex-wrap">
         <select value={filterStatus} onChange={e => setStatus(e.target.value)} className="luma-input w-36 text-sm">
           <option value="">Todos los estados</option>
@@ -744,16 +747,35 @@ const InvoiceHistoryView: React.FC = () => {
           <input type="checkbox" checked={onlyOfficial} onChange={e => setOfficial(e.target.checked)} />
           <Receipt size={12} /> Solo factura oficial
         </label>
+        {/* Contador de registros */}
+        {result && (
+          <span className="ml-auto text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            {result.total === 0
+              ? 'Sin registros'
+              : `${((page - 1) * pageSize) + 1}–${Math.min(page * pageSize, result.total)} de ${result.total} registro${result.total !== 1 ? 's' : ''}`
+            }
+          </span>
+        )}
       </div>
 
       {loading ? <div className="flex justify-center py-12"><Spinner size={32} /></div> : (
-        <div className="luma-surface overflow-hidden">
+        <div className="luma-surface flex flex-col overflow-hidden" style={{ minHeight: 0 }}>
+          <div className="overflow-auto flex-1">
           <table className="w-full text-sm">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                {['Folio', 'Cliente', 'Total', 'Estado', 'Fecha', 'Acciones'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
-                ))}
+                {(['Folio', 'Cliente', 'Total', 'Estado', 'Fecha', 'Acciones'] as const).map(h => {
+                  const col = h === 'Folio' ? 'folio' : h === 'Fecha' ? 'created_at' : null
+                  return col ? (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-medium cursor-pointer select-none"
+                        style={{ color: sortBy === col ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
+                        onClick={() => toggleSort(col)}>
+                      <span className="inline-flex items-center gap-1">{h} <SortIcon col={col} /></span>
+                    </th>
+                  ) : (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
@@ -795,7 +817,19 @@ const InvoiceHistoryView: React.FC = () => {
               ))}
             </tbody>
           </table>
-          {result && <Paginator page={page} pageSize={20} total={result.total} onChange={setPage} />}
+          </div>
+          {result && (
+            <div className="px-4 py-2 border-t flex-shrink-0 flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Filas por página:</span>
+                <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}
+                  className="luma-input text-xs py-0.5 px-2 w-16">
+                  {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <Paginator page={page} pageSize={pageSize} total={result.total} onChange={setPage} />
+            </div>
+          )}
         </div>
       )}
 
