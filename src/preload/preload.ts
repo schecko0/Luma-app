@@ -121,11 +121,12 @@ const api = {
 
   // ── FACTURAS / POS ────────────────────────────────────────────────────
   invoices: {
-    create:     (payload: CreateInvoicePayload) => ipcRenderer.invoke('invoices:create', payload),
-    list:       (p: PaginationParams & { status?: string; dateFrom?: string; dateTo?: string; requiresOfficial?: boolean; registerId?: number; clientSearch?: string }) => ipcRenderer.invoke('invoices:list', p),
-    getById:    (id: number) => ipcRenderer.invoke('invoices:getById', id),
-    cancel:     (id: number, reason: string) => ipcRenderer.invoke('invoices:cancel', id, reason),
-    getTaxRate: () => ipcRenderer.invoke('invoices:getTaxRate'),
+    create:          (payload: CreateInvoicePayload) => ipcRenderer.invoke('invoices:create', payload),
+    list:            (p: PaginationParams & { status?: string; dateFrom?: string; dateTo?: string; requiresOfficial?: boolean; registerId?: number; clientSearch?: string }) => ipcRenderer.invoke('invoices:list', p),
+    getById:         (id: number) => ipcRenderer.invoke('invoices:getById', id),
+    cancel:          (id: number, reason: string) => ipcRenderer.invoke('invoices:cancel', id, reason),
+    getTaxRate:      () => ipcRenderer.invoke('invoices:getTaxRate'),
+    exportSalesData: (dateFrom: string, dateTo: string) => ipcRenderer.invoke('invoices:exportSalesData', dateFrom, dateTo),
   },
 
   // ── COMISIONES ────────────────────────────────────────────────────────

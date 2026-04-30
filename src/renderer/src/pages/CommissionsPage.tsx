@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import {
   BadgeDollarSign, CalendarRange, ChevronDown, ChevronUp,
-  Check, Loader2, AlertCircle, History, Eye, Info, Search, X, User
+  Check, Loader2, AlertCircle, History, Eye, Info, Search, X, User, FileSpreadsheet
 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import type { CommissionPreview, CommissionPreviewEmployee, CommissionRun, PaginatedResult, CommissionDetail } from '../types'
 import { PageHeader, Badge, Spinner, Paginator } from '../components/ui/index'
 import { Modal } from '../components/ui/Modal'
@@ -47,6 +48,25 @@ export const CommissionsPage: React.FC = () => {
 }
 
 // ── Vista de nuevo cuadre ─────────────────────────────────────────────────────
+const fmt_es = (n: number) =>
+  n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const PAYMENT_LABELS: Record<string, string> = {
+  cash:     'Efectivo',
+  card:     'Tarjeta',
+  transfer: 'Transferencia',
+}
+const COMMISSION_MODE_LABELS: Record<string, string> = {
+  simple:       'Modo A (Simple)',
+  proportional: 'Modo B (Proporcional)',
+  manual:       'Modo C (Manual)',
+}
+
+const translatePayments = (raw: string | null): string => {
+  if (!raw) return ''
+  return raw.split(', ').map(m => PAYMENT_LABELS[m.trim()] ?? m.trim()).join(', ')
+}
+
 const NewCommissionView: React.FC = () => {
   // Calcular fechas por defecto: primer y último día del mes actual
   const now     = new Date()
@@ -55,14 +75,140 @@ const NewCommissionView: React.FC = () => {
 
   const [dateFrom, setDateFrom]   = useState(defFrom)
   const [dateTo, setDateTo]       = useState(defTo)
-  const [includeSalaries, setIncludeSalaries] = useState(false) // ← Nuevo toggle
+  const [includeSalaries, setIncludeSalaries] = useState(false)
   const [preview, setPreview]     = useState<CommissionPreview | null>(null)
   const [loadingPreview, setLP]   = useState(false)
+  const [exportingXls, setExportingXls] = useState(false)
   const [confirming, setConf]     = useState(false)
   const [notes, setNotes]         = useState('')
   const [error, setError]         = useState<string | null>(null)
   const [success, setSuccess]     = useState<string | null>(null)
   const [expandedEmp, setExpanded] = useState<Set<number>>(new Set())
+
+  // ── Exportar ventas a Excel ───────────────────────────────────────────
+  const handleExportSales = async () => {
+    if (!dateFrom || !dateTo) { setError('Selecciona un rango de fechas para exportar.'); return }
+    setExportingXls(true); setError(null)
+    try {
+      const res = await window.electronAPI.invoices.exportSalesData(dateFrom, dateTo)
+      if (!res.ok || !res.data) { setError(res.error ?? 'Error al obtener datos'); return }
+
+      const { invoices, serviceLines } = res.data as {
+        invoices: {
+          id: number; folio: string; status: string; commission_mode: string
+          subtotal: number; tax_rate: number; tax_amount: number; total: number
+          fecha: string; client_name: string; client_phone: string | null
+          created_by_username: string; metodos_pago: string | null; notes: string | null
+        }[]
+        serviceLines: {
+          invoice_id: number; invoice_service_id: number
+          service_name: string; unit_price: number; quantity: number; line_total: number
+          employee_id: number; employee_name: string; employee_role: string
+          commission_pct: number; work_split_pct: number; commission_amount: number
+          is_owner: number; commission_run_id: number | null
+        }[]
+      }
+
+      if (invoices.length === 0) {
+        setError(`No se encontraron ventas entre ${dateFrom} y ${dateTo}.`)
+        return
+      }
+
+      const wb = XLSX.utils.book_new()
+
+      // ── Pestaña 1: Ventas (resumen de invoices) ──────────────────────
+      const totalSubtotal = invoices.reduce((s, i) => s + i.subtotal, 0)
+      const totalIva      = invoices.reduce((s, i) => s + i.tax_amount, 0)
+      const totalTotal    = invoices.reduce((s, i) => s + i.total, 0)
+
+      const ventasData = [
+        ['Folio', 'Fecha', 'Cliente', 'Teléfono', 'Subtotal', 'IVA', 'Total', 'Método(s) de pago', 'Modo comisión', 'Registrado por', 'Notas'],
+        ...invoices.map(inv => [
+          inv.folio, inv.fecha, inv.client_name, inv.client_phone ?? '',
+          inv.subtotal, inv.tax_amount, inv.total,
+          translatePayments(inv.metodos_pago),
+          COMMISSION_MODE_LABELS[inv.commission_mode] ?? inv.commission_mode,
+          inv.created_by_username, inv.notes ?? ''
+        ]),
+        [],
+        ['', '', '', 'TOTALES', totalSubtotal, totalIva, totalTotal]
+      ]
+      const wsVentas = XLSX.utils.aoa_to_sheet(ventasData)
+      wsVentas['!cols'] = [10,12,22,14,12,10,12,20,14,16,24].map(w => ({ wch: w }))
+      XLSX.utils.book_append_sheet(wb, wsVentas, 'Ventas')
+
+      // ── Pestaña 2: Comisiones (totales por empleado) ─────────────────
+      const empTotals = new Map<string, { comisiones: number; servicios: number; count: number }>()
+      for (const sl of serviceLines) {
+        const key = sl.employee_name
+        if (!empTotals.has(key)) empTotals.set(key, { comisiones: 0, servicios: 0, count: 0 })
+        const e = empTotals.get(key)!
+        e.comisiones += sl.commission_amount
+        e.servicios  += sl.line_total
+        e.count      += 1
+      }
+      const comisionesData = [
+        ['Empleado', 'Servicios realizados', 'Total vendido (líneas asignadas)', 'Total comisión'],
+        ...Array.from(empTotals.entries()).map(([nombre, vals]) => [
+          nombre, vals.count, vals.servicios, vals.comisiones
+        ]),
+        [],
+        ['TOTAL', '', Array.from(empTotals.values()).reduce((s, v) => s + v.servicios, 0), Array.from(empTotals.values()).reduce((s, v) => s + v.comisiones, 0)]
+      ]
+      const wsComisiones = XLSX.utils.aoa_to_sheet(comisionesData)
+      wsComisiones['!cols'] = [24, 22, 30, 18].map(w => ({ wch: w }))
+      XLSX.utils.book_append_sheet(wb, wsComisiones, 'Comisiones')
+
+      // ── Pestaña por empleado: desglose individual ────────────────────
+      const byEmployee = new Map<string, typeof serviceLines>()
+      for (const sl of serviceLines) {
+        if (!byEmployee.has(sl.employee_name)) byEmployee.set(sl.employee_name, [])
+        byEmployee.get(sl.employee_name)!.push(sl)
+      }
+
+      for (const [nombre, lines] of byEmployee.entries()) {
+        // Enriquecer con datos del invoice (fecha, folio)
+        const invoiceMap = new Map(invoices.map(i => [i.id, i]))
+        const totalLinea     = lines.reduce((s, sl) => s + sl.line_total, 0)
+        const totalComision = lines.reduce((s, sl) => s + sl.commission_amount, 0)
+
+        const detalleData = [
+          ['Folio', 'Fecha', 'Servicio', 'Precio unitario', 'Cantidad', 'Total línea', 'Rol', '% Comisión', '% Trabajo', 'Monto comisión', 'Cuadre previo'],
+          ...lines.map(sl => {
+            const inv = invoiceMap.get(sl.invoice_id)
+            return [
+              inv?.folio ?? '', inv?.fecha ?? '',
+              sl.service_name, sl.unit_price, sl.quantity, sl.line_total,
+              sl.is_owner ? 'Jefe (Remanente)' : 'Auxiliar',
+              sl.commission_pct / 100,
+              sl.work_split_pct / 100,
+              sl.commission_amount,
+              sl.commission_run_id ? `Cuadre #${sl.commission_run_id}` : 'Pendiente'
+            ]
+          }),
+          [],
+          ['', '', '', '', '', totalLinea, '', '', '', totalComision]
+        ]
+        const wsEmp = XLSX.utils.aoa_to_sheet(detalleData)
+        wsEmp['!cols'] = [10,12,22,14,10,12,16,12,12,14,14].map(w => ({ wch: w }))
+        // Formatear columnas de porcentaje (r=1 es la fila 2 en Excel, saltando el header)
+        for (let r = 1; r <= lines.length; r++) {
+          const hCell = XLSX.utils.encode_cell({ r, c: 7 })
+          const wCell = XLSX.utils.encode_cell({ r, c: 8 })
+          if (wsEmp[hCell]) wsEmp[hCell].z = '0.0%'
+          if (wsEmp[wCell]) wsEmp[wCell].z = '0.0%'
+        }
+        // Truncar nombre a 31 chars (límite de Excel para nombre de hoja)
+        const sheetName = nombre.substring(0, 31)
+        XLSX.utils.book_append_sheet(wb, wsEmp, sheetName)
+      }
+
+      // ── Descargar ────────────────────────────────────────────────────
+      const fileName = `ventas_${dateFrom}_${dateTo}.xlsx`
+      XLSX.writeFile(wb, fileName)
+    } catch (e) { setError(String(e)) }
+    finally { setExportingXls(false) }
+  }
 
   const handlePreview = async () => {
     if (!dateFrom || !dateTo) { setError('Selecciona un rango de fechas.'); return }
@@ -131,7 +277,18 @@ const NewCommissionView: React.FC = () => {
               ¿Incluir sueldos base?
             </button>
           </div>
-          <div className="flex items-end ml-auto">
+          <div className="flex items-end gap-2 ml-auto">
+            <button onClick={handleExportSales} disabled={exportingXls}
+              className="luma-btn mt-4 flex items-center gap-1.5 text-xs px-3 py-2"
+              style={{
+                background: 'transparent',
+                color: exportingXls ? 'var(--color-text-muted)' : 'var(--color-success)',
+                border: '1px solid var(--color-success)',
+              }}>
+              {exportingXls
+                ? <><Loader2 size={14} className="animate-spin" /> Exportando...</>
+                : <><FileSpreadsheet size={14} /> Exportar ventas</>}
+            </button>
             <button onClick={handlePreview} disabled={loadingPreview}
               className="luma-btn-primary mt-4">
               {loadingPreview ? <><Loader2 size={15} className="animate-spin" /> Calculando...</> : <><Eye size={15} /> Calcular pre-cuadre</>}

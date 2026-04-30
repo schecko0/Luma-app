@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Save, Loader2, Clock, DollarSign, Crown } from 'lucide-react'
+import { Save, Loader2, Clock, DollarSign, Crown, AlertCircle } from 'lucide-react'
 import type { Service, ServiceCategory, Employee } from '../../types'
 
 type ServiceFormData = Omit<Service, 'id' | 'created_at' | 'updated_at' | 'category_name' | 'owner_name'>
@@ -49,6 +49,7 @@ export const ServiceForm: React.FC<Props> = ({ initial, categories, owners, onSa
     if (!form.category_id)     e.category_id  = 'Selecciona una categoría.'
     if (form.price < 0)        e.price        = 'El precio no puede ser negativo.'
     if (form.duration_min < 1) e.duration_min = 'La duración debe ser al menos 1 minuto.'
+    if (!form.owner_employee_id) e.owner_employee_id = 'El jefe responsable es obligatorio.'
     setErrors(e)
     return !Object.keys(e).length
   }
@@ -127,31 +128,33 @@ export const ServiceForm: React.FC<Props> = ({ initial, categories, owners, onSa
       </div>
 
       {/* Jefe responsable del servicio */}
-      <div className="rounded-xl p-4 border" style={{ background: 'var(--color-surface-2)', borderColor: 'var(--color-border)' }}>
+      <div className="rounded-xl p-4 border" style={{ background: 'var(--color-surface-2)', borderColor: form.owner_employee_id ? 'var(--color-accent)' : 'var(--color-danger)' }}>
         <label className="luma-label mb-2">
           <Crown size={12} className="inline mr-1" style={{ color: 'var(--color-accent)' }} />
-          Jefe responsable (recibe el resto de la comisión)
+          Jefe responsable <span style={{ color: 'var(--color-danger)' }}>*</span>
+          <span className="ml-2 text-[10px] font-normal" style={{ color: 'var(--color-text-muted)' }}>(obligatorio — recibe el resto de la comisión)</span>
         </label>
         <select
           value={form.owner_employee_id ?? ''}
           onChange={e => set('owner_employee_id', e.target.value ? parseInt(e.target.value) : null)}
           className="luma-input"
+          style={{ borderColor: errors.owner_employee_id ? 'var(--color-danger)' : undefined }}
         >
-          <option value="">Sin jefe asignado</option>
+          <option value="">— Selecciona un jefe —</option>
           {owners.map(o => (
             <option key={o.id} value={o.id}>
               👑 {o.full_name ?? `${o.first_name} ${o.last_name}`} — {o.commission_pct}%
             </option>
           ))}
         </select>
-        {!form.owner_employee_id && (
-          <p className="text-xs mt-2" style={{ color: 'var(--color-text-muted)' }}>
-            Si no asignas un jefe, el monto restante después de las comisiones de empleados no se distribuirá.
+        {errors.owner_employee_id && (
+          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: 'var(--color-danger)' }}>
+            <AlertCircle size={11} /> {errors.owner_employee_id}
           </p>
         )}
         {form.owner_employee_id && (
           <p className="text-xs mt-2" style={{ color: 'var(--color-success)' }}>
-            El jefe recibirá: precio del servicio − comisiones de empleados auxiliares.
+            ✓ El jefe recibirá: precio del servicio − comisiones de auxiliares.
           </p>
         )}
       </div>

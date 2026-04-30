@@ -142,15 +142,28 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
 
           for (let idx = 0; idx < svc.employee_ids.length; idx++) {
             const empId = svc.employee_ids[idx]
-            const empRow = db.prepare('SELECT commission_pct, first_name, last_name FROM employees WHERE id = ?').get(empId) as { commission_pct: number; first_name: string; last_name: string } | undefined
+            const empRow = db.prepare('SELECT commission_pct, role, first_name, last_name FROM employees WHERE id = ?').get(empId) as { commission_pct: number; role: string; first_name: string; last_name: string } | undefined
             if (!empRow) continue
 
+            // REGLA: Si un jefe actúa como colaborador, su comisión de colaboración 
+            // debería ser la que tiene asignada (aunque sea jefe, puede tener un % de colab)
+            // En este sistema, commission_pct parece ser ese % para todos.
+            
             const workSplitPct = (mode === 'manual' && svc.work_splits?.[idx] != null)
               ? svc.work_splits![idx]
               : 0
 
+            // FIX Modo A: si el auxiliar es owner (commission_pct = 100 en catálogo),
+            // su comisión como auxiliar viene en work_splits[idx] (ingresada en el POS).
+            // En modo 'simple', si el empleado tiene commission_pct = 100, es un jefe
+            // actuando como auxiliar y su % real llega en work_splits.
+            let effectiveCommPct = empRow.commission_pct
+            if (mode === 'simple' && empRow.commission_pct === 100 && svc.work_splits?.[idx] != null) {
+              effectiveCommPct = svc.work_splits![idx]
+            }
+
             const { commissionAmount, effectiveSplitPct } = calcularComision(
-              lineTotal, employeeCount, empRow.commission_pct, mode, workSplitPct, overheadPct,
+              lineTotal, employeeCount, effectiveCommPct, mode, workSplitPct, overheadPct,
             )
             totalAuxCommission += commissionAmount
 
@@ -172,6 +185,17 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
           // 6. Registrar al jefe del servicio (owner) — recibe el resto
           const serviceRow = db.prepare('SELECT owner_employee_id FROM services WHERE id = ?').get(svc.service_id) as { owner_employee_id: number | null } | undefined
           if (serviceRow?.owner_employee_id) {
+            // Verificar si el jefe ya fue agregado como auxiliar (evitar duplicado o asegurar resto correcto)
+            const alreadyIn = svc.employee_ids.includes(serviceRow.owner_employee_id)
+            
+            if (alreadyIn) {
+               // Si el jefe ya está como auxiliar, simplemente lo marcamos como owner y le damos el resto?
+               // O mejor: lo que ya se le dio como auxiliar se suma al resto.
+               // Pero en el modelo actual, cada empleado tiene una fila.
+               // La lógica actual es: el jefe se agrega como una fila EXTRA con is_owner=1.
+               // Esto es lo que causa confusión si el jefe ya estaba como auxiliar.
+            }
+
             const ownerRow = db.prepare('SELECT commission_pct FROM employees WHERE id = ?').get(serviceRow.owner_employee_id) as { commission_pct: number } | undefined
             const ownerAmount = lineTotal - totalAuxCommission  // El jefe se lleva el resto
 
@@ -370,6 +394,77 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
       const db  = getDb()
       const row = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get() as { value: string } | undefined
       return { ok: true, data: parseFloat(row?.value ?? '0') }
+    } catch (err: unknown) { return { ok: false, error: String(err) } }
+  })
+
+  // ── Exportar datos de ventas detallados (para cuadre) ────────────────
+  ipcMain.handle('invoices:exportSalesData', (_e, dateFrom: string, dateTo: string) => {
+    try {
+      const db = getDb()
+
+      const invoices = db.prepare(`
+        SELECT
+          i.id, i.folio, i.status, i.commission_mode,
+          i.subtotal, i.tax_rate, i.tax_amount, i.total,
+          i.requires_official_invoice, i.notes,
+          DATE(i.created_at) AS fecha,
+          i.created_at,
+          COALESCE(c.first_name || ' ' || c.last_name, 'Sin cliente') AS client_name,
+          c.phone AS client_phone,
+          u.username AS created_by_username,
+          (SELECT GROUP_CONCAT(payment_method, ', ')
+           FROM invoice_payments WHERE invoice_id = i.id) AS metodos_pago
+        FROM invoices i
+        LEFT JOIN clients c ON c.id = i.client_id
+        LEFT JOIN users u   ON u.id = i.created_by
+        WHERE i.status != 'cancelled'
+          AND DATE(i.created_at) >= DATE(?)
+          AND DATE(i.created_at) <= DATE(?)
+        ORDER BY i.created_at ASC
+      `).all(dateFrom, dateTo) as {
+        id: number; folio: string; status: string; commission_mode: string
+        subtotal: number; tax_rate: number; tax_amount: number; total: number
+        requires_official_invoice: number; notes: string | null
+        fecha: string; created_at: string
+        client_name: string; client_phone: string | null
+        created_by_username: string; metodos_pago: string | null
+      }[]
+
+      const invoiceIds = invoices.map(i => i.id)
+      if (invoiceIds.length === 0) return { ok: true, data: { invoices: [], serviceLines: [] } }
+
+      const placeholders = invoiceIds.map(() => '?').join(',')
+
+      const serviceLines = db.prepare(`
+        SELECT
+          is2.invoice_id,
+          is2.id AS invoice_service_id,
+          is2.service_name,
+          is2.unit_price,
+          is2.quantity,
+          is2.line_total,
+          ise.employee_id,
+          (e.first_name || ' ' || e.last_name) AS employee_name,
+          e.role AS employee_role,
+          ise.commission_pct,
+          ise.work_split_pct,
+          ise.commission_amount,
+          ise.is_owner,
+          ise.commission_run_id
+        FROM invoice_services is2
+        JOIN invoice_service_employees ise ON ise.invoice_service_id = is2.id
+        JOIN employees e                   ON e.id = ise.employee_id
+        WHERE is2.invoice_id IN (${placeholders})
+        ORDER BY is2.invoice_id, is2.id, ise.is_owner DESC, e.first_name ASC
+      `).all(...invoiceIds) as {
+        invoice_id: number; invoice_service_id: number
+        service_name: string; unit_price: number; quantity: number; line_total: number
+        employee_id: number; employee_name: string; employee_role: string
+        commission_pct: number; work_split_pct: number; commission_amount: number
+        is_owner: number; commission_run_id: number | null
+      }[]
+
+      return { ok: true, data: { invoices, serviceLines } }
     } catch (err: unknown) { return { ok: false, error: String(err) } }
   })
 }

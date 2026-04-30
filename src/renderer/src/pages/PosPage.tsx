@@ -12,7 +12,7 @@ import { PageHeader, Badge, Spinner, Paginator } from '../components/ui/index'
 import { Autocomplete } from '../components/pos/Autocomplete'
 import { Modal } from '../components/ui/Modal'
 
-interface CartEmployee { employee_id: number; full_name: string; commission_pct: number; work_split_pct?: number }
+interface CartEmployee { employee_id: number; full_name: string; commission_pct: number; work_split_pct?: number; role: string }
 interface CartLine {
   _key: string
   service_id: number; service_name: string; unit_price: number
@@ -112,6 +112,7 @@ const SaleView: React.FC = () => {
   const [successFolio, setSuccess]   = useState<string | null>(null)
   const [allEmployees, setAllEmp]    = useState<Employee[]>([])
   const [confirmNoClient, setConfirmNoClient] = useState(false)
+  const [noOwnerService, setNoOwnerService]   = useState<string | null>(null)
   const [hasDraft, setHasDraft]      = useState(!!_draft && (_draft.cart.length > 0 || !!_draft.client))
 
   useEffect(() => {
@@ -160,7 +161,11 @@ const SaleView: React.FC = () => {
     }
   }, [total])
 
-  const addService = (svc: Service) =>
+  const addService = (svc: Service) => {
+    if (!svc.owner_employee_id) {
+      setNoOwnerService(svc.name)
+      return
+    }
     setCart(prev => [...prev, {
       _key: `${svc.id}_${Date.now()}`,
       service_id: svc.id, service_name: svc.name,
@@ -169,6 +174,7 @@ const SaleView: React.FC = () => {
       owner_name: svc.owner_name ?? null,
       employees: [], showEmployees: false,
     }])
+  }
 
   const removeService   = (key: string) => setCart(prev => prev.filter(l => l._key !== key))
   const toggleEmployees = (key: string) => setCart(prev => prev.map(l => l._key === key ? { ...l, showEmployees: !l.showEmployees } : l))
@@ -177,7 +183,7 @@ const SaleView: React.FC = () => {
   const addEmployee     = (lineKey: string, emp: Employee) =>
     setCart(prev => prev.map(l => {
       if (l._key !== lineKey || l.employees.find(e => e.employee_id === emp.id) || l.owner_employee_id === emp.id) return l
-      return { ...l, employees: [...l.employees, { employee_id: emp.id, full_name: emp.full_name ?? `${emp.first_name} ${emp.last_name}`, commission_pct: emp.commission_pct }] }
+      return { ...l, employees: [...l.employees, { employee_id: emp.id, full_name: emp.full_name ?? `${emp.first_name} ${emp.last_name}`, commission_pct: emp.commission_pct, role: emp.role }] }
     }))
   const removeEmployee = (lineKey: string, empId: number) =>
     setCart(prev => prev.map(l => l._key !== lineKey ? l : { ...l, employees: l.employees.filter(e => e.employee_id !== empId) }))
@@ -211,10 +217,6 @@ const SaleView: React.FC = () => {
     setError(null)
     if (cart.length === 0) { setError('Agrega al menos un servicio.'); return }
     for (const line of cart) {
-      if (line.employees.length === 0 && !line.owner_employee_id) {
-        setError(`"${line.service_name}" no tiene empleado ni jefe. Asigna al menos uno.`); return
-      }
-
       // Validar que la suma de participaciones sea 100% en Modo C
       if (commissionMode === 'manual' && line.employees.length > 0) {
         const totalSplit = line.employees.reduce((s, e) => s + (e.work_split_pct ?? (100 / line.employees.length)), 0)
@@ -242,9 +244,15 @@ const SaleView: React.FC = () => {
         service_id: l.service_id, service_name: l.service_name,
         unit_price: l.unit_price, quantity: l.quantity,
         employee_ids: l.employees.map(e => e.employee_id),
-        // Modo C: enviar work_splits si el modo es manual
-        ...(commissionMode === 'manual' && l.employees.length > 0
-          ? { work_splits: l.employees.map(e => e.work_split_pct ?? (100 / l.employees.length)) }
+        // Modo C: enviar work_splits para participación de trabajo
+        // Modo A con auxiliar owner: enviar work_splits con el % auxiliar ingresado
+        ...((commissionMode === 'manual' && l.employees.length > 0) || 
+            (commissionMode === 'simple' && l.employees.some(e => e.role === 'owner'))
+          ? { work_splits: l.employees.map(e => {
+              if (commissionMode === 'manual') return e.work_split_pct ?? (100 / l.employees.length)
+              // Modo A: para owner-auxiliar, work_split_pct es su % de comisión auxiliar; para otros 0
+              return (e.role === 'owner') ? (e.work_split_pct ?? 0) : 0
+            })}
           : {}),
       })),
       payments: payments.filter(p => p.amount > 0).map(p => ({
@@ -269,6 +277,28 @@ const SaleView: React.FC = () => {
 
   return (
     <>
+      <Modal isOpen={!!noOwnerService} onClose={() => setNoOwnerService(null)}
+        title="Servicio sin jefe asignado" width="sm">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3 text-sm" style={{ color: 'var(--color-text)' }}>
+            <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--color-danger)' }} />
+            <div>
+              <p className="font-medium mb-1">No se puede agregar <strong>"{noOwnerService}"</strong></p>
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                Este servicio no tiene un jefe responsable asignado. Es necesario para calcular las comisiones correctamente.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-lg px-3 py-2 text-xs"
+               style={{ background: 'color-mix(in srgb,var(--color-info) 10%,transparent)', color: 'var(--color-info)' }}>
+            Ve a <strong>Servicios → Editar</strong> y asigna un jefe responsable, luego regresa al POS. Tu venta en curso se conservará.
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => setNoOwnerService(null)} className="luma-btn-primary">Entendido</button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={confirmNoClient} onClose={() => setConfirmNoClient(false)}
         title="¿Continuar sin cliente?" width="sm">
         <div className="flex flex-col gap-4">
@@ -559,13 +589,6 @@ const CartLineCard: React.FC<{
         </div>
       )}
 
-      {!isValid && (
-        <div className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg"
-             style={{ background: 'color-mix(in srgb,var(--color-danger) 10%,transparent)', color: 'var(--color-danger)' }}>
-          <AlertCircle size={11} /> Asigna al menos un empleado auxiliar
-        </div>
-      )}
-
       <button onClick={onToggleEmployees}
         className="flex items-center gap-1.5 text-xs w-full px-2 py-1.5 rounded-lg border"
         style={{
@@ -600,20 +623,37 @@ const CartLineCard: React.FC<{
           {line.employees.map(emp => {
             const defaultSplit = line.employees.length > 0 ? parseFloat((100 / line.employees.length).toFixed(1)) : 100
             const split = emp.work_split_pct ?? defaultSplit
+
+            // En Modo A: si el auxiliar es owner, su commission_pct de catálogo es 100%
+            // (su tasa de jefe), no su tasa como auxiliar.
+            // Usamos work_split_pct para almacenar el % de comisión auxiliar en Modo A
+            // cuando el auxiliar es owner. El usuario lo ingresa manualmente.
+            const isOwnerAux = commissionMode === 'simple' && emp.role === 'owner'
+            const effectiveCommPct = isOwnerAux
+              ? (emp.work_split_pct ?? 0)   // el % que el usuario asigna como auxiliar
+              : emp.commission_pct
+
             const factor = commissionMode === 'proportional' && line.employees.length > 1
               ? 1 / line.employees.length
               : commissionMode === 'manual' ? split / 100 : 1
-            
-            // Aplicar overhead solo en Modo C (manual) para el preview
+
             const baseTotal = commissionMode === 'manual' ? line.line_total * (1 - overheadPct / 100) : line.line_total
-            const effectiveAmount = baseTotal * (emp.commission_pct / 100) * factor
-            
+            const effectiveAmount = isOwnerAux
+              ? line.line_total * (effectiveCommPct / 100)
+              : baseTotal * (effectiveCommPct / 100) * factor
+
             return (
               <div key={emp.employee_id} className="flex items-center gap-2">
                 <span className="text-xs flex-1" style={{ color: 'var(--color-text)' }}>
-                  {emp.full_name}<span className="ml-1" style={{ color: 'var(--color-text-muted)' }}>({emp.commission_pct}%)</span>
+                  {emp.full_name}
+                  {emp.role === 'owner' && (
+                    <span className="ml-1 text-[10px]" style={{ color: 'var(--color-accent)' }}>👑</span>
+                  )}
+                  {!isOwnerAux && (
+                    <span className="ml-1" style={{ color: 'var(--color-text-muted)' }}>({emp.commission_pct}%)</span>
+                  )}
                 </span>
-                {/* Modo C: input de participación */}
+                {/* Modo C: input de participación de trabajo */}
                 {commissionMode === 'manual' && (
                   <div className="flex items-center gap-1">
                     <input
@@ -624,7 +664,23 @@ const CartLineCard: React.FC<{
                       className="w-14 text-center text-xs luma-input py-1 px-1"
                       data-selectable
                     />
-                    <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>%</span>
+                    <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>% trabajo</span>
+                  </div>
+                )}
+                {/* Modo A con auxiliar owner: input de % de comisión como auxiliar */}
+                {isOwnerAux && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min="0" max="100" step="1"
+                      value={emp.work_split_pct ?? ''}
+                      placeholder="0"
+                      onFocus={e => e.target.select()}
+                      onChange={e => onUpdateWorkSplit(emp.employee_id, parseFloat(e.target.value) || 0)}
+                      className="w-14 text-center text-xs luma-input py-1 px-1"
+                      style={{ borderColor: 'var(--color-warning)' }}
+                      data-selectable
+                    />
+                    <span className="text-xs" style={{ color: 'var(--color-warning)' }}>% aux</span>
                   </div>
                 )}
                 <span className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>
