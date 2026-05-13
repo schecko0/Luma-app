@@ -145,7 +145,8 @@ const SaleView: React.FC = () => {
   const total         = subtotal + taxAmount
   const paymentsTotal = payments.reduce((s, p) => s + (p.amount || 0), 0)
   const remaining     = total - paymentsTotal
-  const paymentOk     = Math.abs(remaining) < 0.02
+  const change        = remaining < -0.02 ? Math.abs(remaining) : 0   // cambio a entregar
+  const paymentOk     = remaining <= 0.02   // OK si está exacto o hay cambio
 
   // ── Persistir borrador automáticamente al cambiar cualquier campo relevante ────
   useEffect(() => {
@@ -226,7 +227,27 @@ const SaleView: React.FC = () => {
         }
       }
     }
-    if (!paymentOk) { setError(`Falta ${fmt(remaining)} por asignar al método de pago.`); return }
+    // Validar métodos de pago según su tipo:
+    // - Efectivo: puede sobrar (cambio), solo bloquear si FALTA
+    // - Tarjeta / Transferencia: deben cubrir exactamente lo que se les asignó
+    const nonCashPayments = payments.filter(p => p.method !== 'cash' && p.amount > 0)
+    const nonCashTotal    = nonCashPayments.reduce((s, p) => s + p.amount, 0)
+    const cashPayment     = payments.find(p => p.method === 'cash')
+    const cashAmount      = cashPayment?.amount || 0
+    const hasCash         = cashAmount > 0
+
+    if (nonCashTotal > total + 0.02) {
+      setError(`Los pagos con tarjeta/transferencia (${nonCashTotal.toFixed(2)}) superan el total de la nota (${total.toFixed(2)}). Ajusta los montos.`)
+      return
+    }
+    if (!hasCash && Math.abs(nonCashTotal - total) > 0.02) {
+      setError(`El pago debe ser exacto para tarjeta/transferencia. Falta ${fmt(total - nonCashTotal)}.`)
+      return
+    }
+    if (hasCash && nonCashTotal + cashAmount < total - 0.02) {
+      setError(`Falta ${fmt(total - nonCashTotal - cashAmount)} por cubrir.`)
+      return
+    }
     if (!client) { setConfirmNoClient(true); return }
     doSave()
   }
@@ -239,7 +260,7 @@ const SaleView: React.FC = () => {
       client_id:                 client?.id ?? null,
       requires_official_invoice: requiresInvoice,
       apply_tax:                 requiresInvoice,
-      notes:                     notes || null,
+      notes:                     change > 0 ? `${notes ? notes + ' | ' : ''}Cambio entregado: ${change.toFixed(2)}` : notes || null,
       services: cart.map(l => ({
         service_id: l.service_id, service_name: l.service_name,
         unit_price: l.unit_price, quantity: l.quantity,
@@ -255,9 +276,26 @@ const SaleView: React.FC = () => {
             })}
           : {}),
       })),
-      payments: payments.filter(p => p.amount > 0).map(p => ({
-        payment_method: p.method, amount: p.amount, reference: p.reference || undefined,
-      })),
+      // Regla de cambio por método de pago:
+      // - Tarjeta / Transferencia: monto EXACTO, no se modifica (la terminal cobra lo que dice).
+      // - Efectivo: puede recibir más de lo necesario; se recorta al saldo pendiente tras
+      //   descontar los otros métodos, de modo que el total enviado al backend siempre
+      //   coincida con el total de la nota y las comisiones sean correctas.
+      payments: (() => {
+        const activePayments = payments.filter(p => p.amount > 0)
+        const nonCashTotal   = activePayments
+          .filter(p => p.method !== 'cash')
+          .reduce((s, p) => s + p.amount, 0)
+        const cashNeeded     = Math.max(0, total - nonCashTotal)   // lo que falta cubrir con efectivo
+        return activePayments.map(p => {
+          if (p.method !== 'cash') {
+            // Tarjeta / Transferencia: respetar monto exacto tal como fue cobrado
+            return { payment_method: p.method, amount: p.amount, reference: p.reference || undefined }
+          }
+          // Efectivo: recortar al monto necesario (absorbe el cambio)
+          return { payment_method: p.method, amount: parseFloat(cashNeeded.toFixed(2)), reference: p.reference || undefined }
+        }).filter(p => p.amount > 0)  // eliminar efectivo si quedó en 0 (todo cubierto por otros métodos)
+      })(),
     }
     try {
       const res = await window.electronAPI.invoices.create(payload)
@@ -498,11 +536,25 @@ const SaleView: React.FC = () => {
             {paymentsTotal > 0 && (
               <div className="rounded-lg px-3 py-2 text-sm flex items-center justify-between"
                    style={{
-                     background: paymentOk ? 'color-mix(in srgb,var(--color-success) 12%,transparent)' : 'color-mix(in srgb,var(--color-warning) 12%,transparent)',
-                     color:      paymentOk ? 'var(--color-success)' : 'var(--color-warning)',
+                     background: change > 0
+                       ? 'color-mix(in srgb,var(--color-info) 12%,transparent)'
+                       : paymentOk
+                         ? 'color-mix(in srgb,var(--color-success) 12%,transparent)'
+                         : 'color-mix(in srgb,var(--color-warning) 12%,transparent)',
+                     color: change > 0
+                       ? 'var(--color-info)'
+                       : paymentOk
+                         ? 'var(--color-success)'
+                         : 'var(--color-warning)',
                    }}>
-                <span>{remaining < 0 ? 'Cambio:' : remaining > 0 ? 'Falta:' : '✓ Exacto'}</span>
-                {remaining !== 0 && <strong>{fmt(Math.abs(remaining))}</strong>}
+                <span>
+                  {change > 0
+                    ? '💰 Entregar cambio de:'
+                    : remaining > 0.02
+                      ? 'Falta:'
+                      : '✓ Exacto'}
+                </span>
+                {(change > 0 || remaining > 0.02) && <strong>{fmt(change > 0 ? change : remaining)}</strong>}
               </div>
             )}
 

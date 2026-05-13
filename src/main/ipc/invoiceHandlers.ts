@@ -67,11 +67,11 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
         const taxAmount = subtotal * (taxRate / 100)
         const total     = subtotal + taxAmount
 
-        // 2. Validar cuadre de pagos
+        // Validar cuadre de pagos (tolerancia de $0.10 por redondeos en pagos proporcionales con cambio)
         const paymentsTotal = payload.payments.reduce((s, p) => s + p.amount, 0)
-        if (Math.abs(paymentsTotal - total) > 0.02) {
+        if (Math.abs(paymentsTotal - total) > 0.10) {
           throw new Error(
-            `El total de pagos ($${paymentsTotal.toFixed(2)}) no coincide con el total de la factura ($${total.toFixed(2)}).`
+            `El total de pagos (${paymentsTotal.toFixed(2)}) no coincide con el total de la factura (${total.toFixed(2)}).`
           )
         }
 
