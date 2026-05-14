@@ -61,6 +61,7 @@ function runMigrations() {
   if (current < 10) applyMigration10()  // ← Papelera de citas + auditoría de cancelaciones
   if (current < 11) applyMigration11()  // ← gc_updated_at en appointments + gc_sync_token en settings
   if (current < 12) applyMigration12()  // ← Normalizar fechas a UTC puro en appointments
+  if (current < 13) applyMigration13()  // ← material_cost en services + tabla de costos de materiales
 }
 
 function getCurrentVersion(): number {
@@ -746,6 +747,54 @@ function applyMigration11() {
   migrate()
   setVersion(11)
   log('Migración 11 completada.')
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 13 — material_cost en services + tabla invoice_service_material_costs
+//
+// material_cost: monto por unidad que se aparta para cubrir el costo del
+//   material del servicio. Se descuenta de la base comisionable antes de
+//   calcular cualquier comisión (auxiliares + jefe).
+//
+// invoice_service_material_costs: snapshot del costo en el momento de la
+//   venta, vinculado a la línea del servicio. Permite consultar por periodo
+//   cuánto dinero debe quedar apartado para materiales independientemente
+//   de cuándo se haga el cuadre de comisiones.
+// ───────────────────────────────────────────────────────────────────────────────
+function applyMigration13() {
+  log('Aplicando migración 13: material_cost en services + tabla de costos de materiales...')
+  const migrate = db.transaction(() => {
+
+    // Campo en el catálogo de servicios
+    db.exec(`
+      ALTER TABLE services
+        ADD COLUMN material_cost REAL NOT NULL DEFAULT 0
+          CHECK(material_cost >= 0);
+    `)
+
+    // Snapshot por línea de venta — permite consultar histórico por periodo
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS invoice_service_material_costs (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_service_id  INTEGER NOT NULL REFERENCES invoice_services(id) ON DELETE CASCADE,
+        invoice_id          INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        service_name        TEXT    NOT NULL,
+        material_cost_unit  REAL    NOT NULL,
+        quantity            INTEGER NOT NULL DEFAULT 1,
+        total_material      REAL    NOT NULL,
+        created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ismc_invoice
+        ON invoice_service_material_costs(invoice_id);
+      CREATE INDEX IF NOT EXISTS idx_ismc_date
+        ON invoice_service_material_costs(created_at);
+      CREATE INDEX IF NOT EXISTS idx_ismc_inv_service
+        ON invoice_service_material_costs(invoice_service_id);
+    `)
+  })
+  migrate()
+  setVersion(13)
+  log('Migración 13 completada.')
 }
 
 function applyMigration6() {

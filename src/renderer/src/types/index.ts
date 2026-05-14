@@ -57,6 +57,8 @@ export interface Service {
   id: number; category_id: number
   name: string; description: string | null
   price: number; duration_min: number
+  // Costo de material por unidad — se descuenta de la base comisionable si > 0
+  material_cost: number
   // Jefe responsable del servicio (Opción A — asignado en catálogo)
   owner_employee_id: number | null
   is_active: boolean; created_at: string; updated_at: string
@@ -170,6 +172,9 @@ export interface CreateInvoicePayload {
     // Modo C: porcentaje de participación por auxiliar (índice paralelo a employee_ids)
     // Si viene undefined o vacío, el motor usa el factor automático (Modo A/B)
     work_splits?: number[]
+    // Costo de material por unidad (snapshot del catálogo al agregar al carrito)
+    // Si > 0, se descuenta de la base comisionable antes de calcular comisiones
+    material_cost_unit?: number
   }[]
   payments: {
     payment_method: PaymentMethod; amount: number; reference?: string
@@ -224,11 +229,25 @@ export interface CommissionPreview {
   date_from: string; date_to: string
   employees: CommissionPreviewEmployee[]
   total_invoiced: number; total_commissions: number; total_business: number
-  total_salaries: number      // ← Nuevo: suma de sueldos pagados
-  total_to_pay: number        // ← Nuevo: comisiones + sueldos
-  include_salaries: boolean   // ← Nuevo: si se incluyeron sueldos
+  total_salaries: number
+  total_to_pay: number
+  include_salaries: boolean
+  /** Total apartado para materiales en el periodo */
+  total_materials: number
+  /** Líneas individuales de costos de materiales */
+  material_lines: MaterialCostLine[]
   /** Líneas del mismo rango que ya fueron incluidas en un cuadre anterior */
   already_commissioned: number
+}
+
+// ── Materiales apartados (no comisionados) ─────────────────────────────────────────────────
+export interface MaterialCostLine {
+  invoice_folio:      string
+  invoice_date:       string
+  service_name:       string
+  material_cost_unit: number
+  quantity:           number
+  total_material:     number
 }
 
 // ── Agenda / Citas ────────────────────────────────────────────────────────────

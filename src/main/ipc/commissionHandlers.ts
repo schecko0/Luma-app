@@ -118,10 +118,33 @@ export function registerCommissionHandlers(ipcMain: IpcMain) {
       const total_to_pay      = total_commissions + total_salaries
       const total_business    = total_invoiced - total_to_pay
 
+      // ── Materiales apartados en el rango ─────────────────────────────────────────────────
+      const materialRows = db.prepare(`
+        SELECT
+          i.folio       AS invoice_folio,
+          i.created_at  AS invoice_date,
+          mc.service_name,
+          mc.material_cost_unit,
+          mc.quantity,
+          mc.total_material
+        FROM invoice_service_material_costs mc
+        JOIN invoices i ON i.id = mc.invoice_id
+        WHERE i.status != 'cancelled'
+          AND DATE(i.created_at) >= DATE(?)
+          AND DATE(i.created_at) <= DATE(?)
+        ORDER BY i.created_at ASC
+      `).all(dateFrom, dateTo) as {
+        invoice_folio: string; invoice_date: string; service_name: string
+        material_cost_unit: number; quantity: number; total_material: number
+      }[]
+
+      const total_materials = materialRows.reduce((s, r) => s + r.total_material, 0)
+
       const preview: CommissionPreview = {
         date_from: dateFrom, date_to: dateTo,
         employees, total_invoiced, total_commissions, total_business,
         total_salaries, total_to_pay, include_salaries: includeSalaries,
+        total_materials, material_lines: materialRows,
         already_commissioned,
       }
 

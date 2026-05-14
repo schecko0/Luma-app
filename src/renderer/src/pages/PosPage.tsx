@@ -18,6 +18,7 @@ interface CartLine {
   service_id: number; service_name: string; unit_price: number
   quantity: number; line_total: number
   owner_employee_id: number | null; owner_name: string | null
+  material_cost_unit: number
   employees: CartEmployee[]; showEmployees: boolean
 }
 interface PaymentLine { method: PaymentMethod; amount: number; reference: string }
@@ -173,6 +174,7 @@ const SaleView: React.FC = () => {
       unit_price: svc.price, quantity: 1, line_total: svc.price,
       owner_employee_id: svc.owner_employee_id,
       owner_name: svc.owner_name ?? null,
+      material_cost_unit: svc.material_cost ?? 0,
       employees: [], showEmployees: false,
     }])
   }
@@ -265,6 +267,7 @@ const SaleView: React.FC = () => {
         service_id: l.service_id, service_name: l.service_name,
         unit_price: l.unit_price, quantity: l.quantity,
         employee_ids: l.employees.map(e => e.employee_id),
+        material_cost_unit: l.material_cost_unit > 0 ? l.material_cost_unit : undefined,
         // Modo C: enviar work_splits para participación de trabajo
         // Modo A con auxiliar owner: enviar work_splits con el % auxiliar ingresado
         ...((commissionMode === 'manual' && l.employees.length > 0) || 
@@ -618,6 +621,11 @@ const CartLineCard: React.FC<{
           <p className="font-medium text-sm" style={{ color: 'var(--color-text)' }}>{line.service_name}</p>
           <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
             {fmt(line.unit_price)} × {line.quantity} = <strong style={{ color: 'var(--color-accent)' }}>{fmt(line.line_total)}</strong>
+            {line.material_cost_unit > 0 && (
+              <span className="ml-2" style={{ color: 'var(--color-info)' }}>
+                📦 Mat. ${(line.material_cost_unit * line.quantity).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-1">

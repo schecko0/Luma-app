@@ -128,11 +128,12 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
       const now    = nowISO()
       const result = db.prepare(`
         INSERT INTO services
-          (category_id, name, description, price, duration_min, owner_employee_id, is_active, created_at, updated_at)
+          (category_id, name, description, price, duration_min, material_cost, owner_employee_id, is_active, created_at, updated_at)
         VALUES
-          (@category_id, @name, @description, @price, @duration_min, @owner_employee_id, @is_active, @created_at, @updated_at)
+          (@category_id, @name, @description, @price, @duration_min, @material_cost, @owner_employee_id, @is_active, @created_at, @updated_at)
       `).run({
         ...data, name: data.name.trim(),
+        material_cost: data.material_cost ?? 0,
         owner_employee_id: data.owner_employee_id ?? null,
         is_active: data.is_active ? 1 : 0, created_at: now, updated_at: now,
       })
@@ -153,6 +154,7 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
         UPDATE services SET
           category_id = @category_id, name = @name, description = @description,
           price = @price, duration_min = @duration_min,
+          material_cost = @material_cost,
           owner_employee_id = @owner_employee_id,
           is_active = @is_active, updated_at = @updated_at
         WHERE id = @id
@@ -162,6 +164,7 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
         description:      data.description      ?? cur.description,
         price:            data.price            ?? cur.price,
         duration_min:     data.duration_min     ?? cur.duration_min,
+        material_cost:    data.material_cost    !== undefined ? data.material_cost : (cur.material_cost ?? 0),
         owner_employee_id: data.owner_employee_id !== undefined ? (data.owner_employee_id ?? null) : (cur.owner_employee_id ?? null),
         is_active:        (data.is_active        ?? cur.is_active) ? 1 : 0,
         updated_at:       nowISO(),

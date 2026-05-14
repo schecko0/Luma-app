@@ -137,50 +137,95 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
 
           const invServiceId = svcResult.lastInsertRowid as number
 
-          // 5. Calcular comisiones de empleados auxiliares
-          let totalAuxCommission = 0
+          // 5a. Calcular base comisionable descontando el costo de material
+          const materialCostUnit  = svc.material_cost_unit ?? 0
+          const totalMaterial     = materialCostUnit * svc.quantity
+          const commissionableBase = lineTotal - totalMaterial
 
-          for (let idx = 0; idx < svc.employee_ids.length; idx++) {
-            const empId = svc.employee_ids[idx]
-            const empRow = db.prepare('SELECT commission_pct, role, first_name, last_name FROM employees WHERE id = ?').get(empId) as { commission_pct: number; role: string; first_name: string; last_name: string } | undefined
-            if (!empRow) continue
-
-            // REGLA: Si un jefe actúa como colaborador, su comisión de colaboración 
-            // debería ser la que tiene asignada (aunque sea jefe, puede tener un % de colab)
-            // En este sistema, commission_pct parece ser ese % para todos.
-            
-            const workSplitPct = (mode === 'manual' && svc.work_splits?.[idx] != null)
-              ? svc.work_splits![idx]
-              : 0
-
-            // FIX Modo A: si el auxiliar es owner (commission_pct = 100 en catálogo),
-            // su comisión como auxiliar viene en work_splits[idx] (ingresada en el POS).
-            // En modo 'simple', si el empleado tiene commission_pct = 100, es un jefe
-            // actuando como auxiliar y su % real llega en work_splits.
-            let effectiveCommPct = empRow.commission_pct
-            if (mode === 'simple' && empRow.commission_pct === 100 && svc.work_splits?.[idx] != null) {
-              effectiveCommPct = svc.work_splits![idx]
-            }
-
-            const { commissionAmount, effectiveSplitPct } = calcularComision(
-              lineTotal, employeeCount, effectiveCommPct, mode, workSplitPct, overheadPct,
-            )
-            totalAuxCommission += commissionAmount
-
+          // Guardar snapshot del costo de material si aplica
+          if (materialCostUnit > 0) {
             db.prepare(`
-              INSERT INTO invoice_service_employees
-                (invoice_service_id, employee_id, commission_pct, work_split_pct, commission_amount, is_owner, created_at)
+              INSERT INTO invoice_service_material_costs
+                (invoice_service_id, invoice_id, service_name, material_cost_unit, quantity, total_material, created_at)
               VALUES
-                (@invoice_service_id, @employee_id, @commission_pct, @work_split_pct, @commission_amount, 0, @created_at)
+                (@invoice_service_id, @invoice_id, @service_name, @material_cost_unit, @quantity, @total_material, @created_at)
             `).run({
               invoice_service_id: invServiceId,
-              employee_id:        empId,
-              commission_pct:     empRow.commission_pct,
-              work_split_pct:     effectiveSplitPct,
-              commission_amount:  commissionAmount,
+              invoice_id:         invoiceId,
+              service_name:       svc.service_name,
+              material_cost_unit: materialCostUnit,
+              quantity:           svc.quantity,
+              total_material:     totalMaterial,
               created_at:         now,
             })
           }
+
+          // 5b. Calcular comisiones de empleados auxiliares
+        // IMPORTANTE: primero procesamos auxiliares regulares (no-owner) para que
+        // totalAuxCommission sea correcto cuando llegue un owner actuando como auxiliar.
+        const regularAux  = svc.employee_ids
+          .map((id, idx) => ({ id, idx }))
+          .filter(({ id }) => {
+            const e = db.prepare('SELECT commission_pct, role FROM employees WHERE id = ?').get(id) as { commission_pct: number; role: string } | undefined
+            // En Modo A: owner-aux se detecta por role='owner'. En otros modos: todos iguales.
+            return !(mode === 'simple' && e?.role === 'owner')
+          })
+        const ownerAux    = svc.employee_ids
+          .map((id, idx) => ({ id, idx }))
+          .filter(({ id }) => {
+            const e = db.prepare('SELECT commission_pct, role FROM employees WHERE id = ?').get(id) as { commission_pct: number; role: string } | undefined
+            return mode === 'simple' && e?.role === 'owner'
+          })
+        const orderedAux  = [...regularAux, ...ownerAux]
+
+        let totalAuxCommission = 0
+
+        for (const { id: empId, idx } of orderedAux) {
+          const empRow = db.prepare('SELECT commission_pct, role, first_name, last_name FROM employees WHERE id = ?').get(empId) as { commission_pct: number; role: string; first_name: string; last_name: string } | undefined
+          if (!empRow) continue
+
+          const workSplitPct = (mode === 'manual' && svc.work_splits?.[idx] != null)
+            ? svc.work_splits![idx]
+            : 0
+
+          // Detectar owner actuando como auxiliar (Modo A)
+          const isOwnerAux = mode === 'simple' && empRow.role === 'owner'
+
+          let effectiveCommPct: number
+          let commissionAmount: number
+
+          if (isOwnerAux) {
+            // El % que le corresponde como auxiliar viene en work_splits[idx]
+            effectiveCommPct = svc.work_splits?.[idx] ?? 0
+            // BUG FIX: se calcula sobre el REMANENTE (lo que queda tras auxiliares regulares)
+            // no sobre el lineTotal completo
+            const remainingBase = commissionableBase - totalAuxCommission
+            commissionAmount    = remainingBase * (effectiveCommPct / 100)
+          } else {
+            effectiveCommPct = empRow.commission_pct
+            const { commissionAmount: ca } = calcularComision(
+              commissionableBase, employeeCount, effectiveCommPct, mode, workSplitPct, overheadPct,
+            )
+            commissionAmount = ca
+          }
+
+          totalAuxCommission += commissionAmount
+
+          db.prepare(`
+            INSERT INTO invoice_service_employees
+              (invoice_service_id, employee_id, commission_pct, work_split_pct, commission_amount, is_owner, created_at)
+            VALUES
+              (@invoice_service_id, @employee_id, @commission_pct, @work_split_pct, @commission_amount, 0, @created_at)
+          `).run({
+            invoice_service_id: invServiceId,
+            employee_id:        empId,
+            // Guardar el % efectivo real (no el 100% del catálogo para owner-aux)
+            commission_pct:     effectiveCommPct,
+            work_split_pct:     isOwnerAux ? effectiveCommPct : (mode === 'manual' ? workSplitPct : (mode === 'proportional' && employeeCount > 1 ? parseFloat((100 / employeeCount).toFixed(4)) : 100)),
+            commission_amount:  commissionAmount,
+            created_at:         now,
+          })
+        }
 
           // 6. Registrar al jefe del servicio (owner) — recibe el resto
           const serviceRow = db.prepare('SELECT owner_employee_id FROM services WHERE id = ?').get(svc.service_id) as { owner_employee_id: number | null } | undefined
@@ -197,7 +242,7 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
             }
 
             const ownerRow = db.prepare('SELECT commission_pct FROM employees WHERE id = ?').get(serviceRow.owner_employee_id) as { commission_pct: number } | undefined
-            const ownerAmount = lineTotal - totalAuxCommission  // El jefe se lleva el resto
+            const ownerAmount = commissionableBase - totalAuxCommission  // El jefe se lleva el resto de la base comisionable
 
             db.prepare(`
               INSERT OR IGNORE INTO invoice_service_employees
@@ -362,6 +407,23 @@ export function registerInvoiceHandlers(ipcMain: IpcMain) {
 
       withTransaction(() => {
         const now = nowISO()
+
+        // Verificar si alguna línea de esta factura ya fue incluida en un cuadre de comisiones
+        const comisionada = db.prepare(`
+          SELECT COUNT(*) AS cnt
+          FROM invoice_services is2
+          JOIN invoice_service_employees ise ON ise.invoice_service_id = is2.id
+          WHERE is2.invoice_id = ?
+            AND ise.commission_run_id IS NOT NULL
+        `).get(id) as { cnt: number }
+
+        if (comisionada.cnt > 0) {
+          throw new Error(
+            'Esta venta ya fue incluida en un cuadre de comisiones y no puede cancelarse. ' +
+            'Si necesitas hacer un ajuste, contacta al administrador.'
+          )
+        }
+
         db.prepare(`
           UPDATE invoices SET status = 'cancelled', cancellation_reason = ?,
             cancelled_by = 1, cancelled_at = ?, updated_at = ?

@@ -6,7 +6,7 @@ type ServiceFormData = Omit<Service, 'id' | 'created_at' | 'updated_at' | 'categ
 
 const EMPTY: ServiceFormData = {
   category_id: 0, name: '', description: null,
-  price: 0, duration_min: 60, owner_employee_id: null, is_active: true,
+  price: 0, duration_min: 60, material_cost: 0, owner_employee_id: null, is_active: true,
 }
 
 interface Props {
@@ -28,6 +28,7 @@ export const ServiceForm: React.FC<Props> = ({ initial, categories, owners, onSa
         category_id: initial.category_id, name: initial.name,
         description: initial.description, price: initial.price,
         duration_min: initial.duration_min,
+        material_cost: initial.material_cost ?? 0,
         owner_employee_id: initial.owner_employee_id,
         is_active: initial.is_active,
       })
@@ -125,6 +126,28 @@ export const ServiceForm: React.FC<Props> = ({ initial, categories, owners, onSa
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>{formatDuration(form.duration_min)}</p>
           )}
         </div>
+      </div>
+
+      {/* Costo de material */}
+      <div className="rounded-xl p-4 border" style={{ background: 'var(--color-surface-2)', borderColor: 'var(--color-border)' }}>
+        <label className="luma-label mb-1">
+          <span className="inline-flex items-center gap-1">
+            <span style={{ color: 'var(--color-info)' }}>📦</span> Costo de material por servicio
+            <span className="ml-1 text-[10px] font-normal" style={{ color: 'var(--color-text-muted)' }}>(opcional — se aparta antes de comisionar)</span>
+          </span>
+        </label>
+        <input
+          type="number" min="0" step="0.50" placeholder="0.00"
+          value={form.material_cost === 0 ? '' : form.material_cost}
+          onChange={e => set('material_cost', parseFloat(e.target.value) || 0)}
+          className="luma-input"
+        />
+        {(form.material_cost ?? 0) > 0 && form.price > 0 && (
+          <p className="text-xs mt-2" style={{ color: 'var(--color-info)' }}>
+            Base comisionable: <strong>${(form.price - form.material_cost).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</strong>
+            {' '}· Material apartado: <strong>${form.material_cost.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</strong> por unidad
+          </p>
+        )}
       </div>
 
       {/* Jefe responsable del servicio */}

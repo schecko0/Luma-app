@@ -4,7 +4,7 @@ import {
   Check, Loader2, AlertCircle, History, Eye, Info, Search, X, User, FileSpreadsheet
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import type { CommissionPreview, CommissionPreviewEmployee, CommissionRun, PaginatedResult, CommissionDetail } from '../types'
+import type { CommissionPreview, CommissionPreviewEmployee, CommissionRun, PaginatedResult, CommissionDetail, MaterialCostLine } from '../types'
 import { PageHeader, Badge, Spinner, Paginator } from '../components/ui/index'
 import { Modal } from '../components/ui/Modal'
 import { Autocomplete } from '../components/pos/Autocomplete'
@@ -203,7 +203,20 @@ const NewCommissionView: React.FC = () => {
         XLSX.utils.book_append_sheet(wb, wsEmp, sheetName)
       }
 
-      // ── Descargar ────────────────────────────────────────────────────
+      // ── Pestaña: Materiales apartados ────────────────────────────────────
+      // Los datos de material se almacenan en invoice_service_material_costs
+      // por venta. Para el desglose completo se debe generar un pre-cuadre
+      // de comisiones con el mismo rango; aquí se deja la estructura lista
+      // y una nota orientativa.
+      const wsMateriales = XLSX.utils.aoa_to_sheet([
+        ['Folio', 'Fecha', 'Servicio', 'Costo material unitario', 'Cantidad', 'Total apartado'],
+        ['', '', '— Genera un pre-cuadre de comisiones con este mismo rango de fechas', '', '', ''],
+        ['', '', '  para ver el desglose completo por servicio en el módulo de Comisiones.', '', '', ''],
+      ])
+      wsMateriales['!cols'] = [10, 12, 50, 24, 10, 16].map(w => ({ wch: w }))
+      XLSX.utils.book_append_sheet(wb, wsMateriales, 'Materiales')
+
+      // ── Descargar ─────────────────────────────────────────────────────────
       const fileName = `ventas_${dateFrom}_${dateTo}.xlsx`
       XLSX.writeFile(wb, fileName)
     } catch (e) { setError(String(e)) }
@@ -327,10 +340,11 @@ const NewCommissionView: React.FC = () => {
             </div>
           )}
           {/* Tarjetas de resumen */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             {[
               { label: 'Total facturado en el periodo', value: fmt(preview.total_invoiced),    color: 'var(--color-text)',    sub: `Del ${preview.date_from} al ${preview.date_to}` },
               { label: 'Total a repartir',              value: fmt(preview.total_to_pay),      color: 'var(--color-warning)', sub: `${fmt(preview.total_commissions)} en comisiones + ${fmt(preview.total_salaries)} en sueldos base` },
+              { label: 'Apartado para materiales',      value: fmt(preview.total_materials),   color: 'var(--color-info)',    sub: `${preview.material_lines.length} servicio(s) con costo de material` },
             ].map(card => (
               <div key={card.label} className="luma-surface p-4">
                 <p className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>{card.label}</p>
@@ -362,6 +376,45 @@ const NewCommissionView: React.FC = () => {
                   />
                 ))}
               </div>
+
+              {/* Tabla de materiales apartados */}
+              {preview.total_materials > 0 && (
+                <div className="luma-surface overflow-hidden">
+                  <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
+                    <p className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--color-text)' }}>
+                      <span style={{ color: 'var(--color-info)' }}>📦</span> Materiales apartados
+                    </p>
+                    <span className="text-sm font-bold" style={{ color: 'var(--color-info)' }}>{fmt(preview.total_materials)}</span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr style={{ background: 'var(--color-surface-2)', borderBottom: '1px solid var(--color-border)' }}>
+                        {['Folio', 'Fecha', 'Servicio', 'Costo unit.', 'Cant.', 'Total apartado'].map(h => (
+                          <th key={h} className="text-left px-4 py-2 font-medium" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.material_lines.map((ml, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                          <td className="px-4 py-2 font-mono" style={{ color: 'var(--color-accent)' }}>{ml.invoice_folio}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text-muted)' }}>
+                            {new Date(ml.invoice_date).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
+                          </td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text)' }}>{ml.service_name}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text-muted)' }}>{fmt(ml.material_cost_unit)}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text-muted)' }}>{ml.quantity}</td>
+                          <td className="px-4 py-2 font-medium" style={{ color: 'var(--color-info)' }}>{fmt(ml.total_material)}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ borderTop: '2px solid var(--color-border)' }}>
+                        <td colSpan={5} className="px-4 py-2 text-right font-medium" style={{ color: 'var(--color-text-muted)' }}>Total:</td>
+                        <td className="px-4 py-2 font-bold" style={{ color: 'var(--color-info)' }}>{fmt(preview.total_materials)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* Confirmación */}
               <div className="luma-surface p-5 flex flex-col gap-4 border-2"

@@ -244,15 +244,68 @@ const PosGuide = () => (
 const CommissionsGuide = () => (
   <GuideWrapper icon={<BadgeDollarSign className="text-accent" />} title="Comisiones"
     subtitle="Calcula y registra la distribucion de ingresos al personal de forma automatica.">
+
     <SectionTitle>Logica de reparto</SectionTitle>
     <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
-      Colaborador auxiliar recibe su porcentaje de comision sobre el precio. El jefe del servicio (Owner) recibe el remanente total despues de pagar las comisiones de los auxiliares.
+      El sistema calcula las comisiones sobre la <strong>base comisionable</strong> de cada servicio,
+      que es el precio del servicio menos el costo de material (si aplica). Si el servicio no tiene
+      costo de material definido, la base comisionable es igual al precio total.
     </p>
-    <HelpStep number={1} title="Seleccionar periodo" body="Elige el rango de fechas y si deseas incluir sueldos base en este corte." />
-    <HelpStep number={2} title="Revisar el pre-cuadre" body="Veras el total facturado y la tabla por empleado con el detalle de cada ticket." />
-    <HelpStep number={3} title="Confirmar y auditar" body="Al confirmar, se genera un registro historico. El sistema marca esos servicios como pagados." />
+    <div className="flex flex-col gap-3">
+      {[
+        { icon: <Users size={14} />,   color: 'var(--color-info)',    label: 'Colaborador auxiliar', desc: 'Recibe su porcentaje de comision calculado sobre la base comisionable del servicio.' },
+        { icon: <Crown size={14} />,   color: 'var(--color-accent)',  label: 'Jefe del servicio',    desc: 'Recibe el remanente de la base comisionable despues de pagar a todos los auxiliares.' },
+        { icon: <Crown size={14} />,   color: 'var(--color-warning)', label: 'Jefe como auxiliar',   desc: 'Si un jefe participa como colaborador en un servicio de otro jefe, su comision se calcula sobre el remanente tras los auxiliares regulares. El jefe del servicio recibe lo que sobre.' },
+        { icon: <Package size={14} />, color: 'var(--color-info)',    label: 'Costo de material',    desc: 'Se descuenta del precio antes de cualquier calculo. El monto apartado queda visible en el pre-cuadre y en el Excel exportado.' },
+      ].map((row, i) => (
+        <div key={i} className="flex items-start gap-3 p-3 rounded-xl border"
+             style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+          <span className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: `color-mix(in srgb, ${row.color} 15%, transparent)`, color: row.color }}>
+            {row.icon}
+          </span>
+          <div>
+            <p className="text-xs font-semibold" style={{ color: 'var(--color-text)' }}>{row.label}</p>
+            <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{row.desc}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <SectionTitle>Como generar un cuadre</SectionTitle>
+    <HelpStep number={1} title="Seleccionar periodo" body="Elige el rango de fechas y si deseas incluir sueldos base en este corte. Por defecto se muestra el mes en curso." />
+    <HelpStep number={2} title="Calcular el pre-cuadre" body='Haz clic en "Calcular pre-cuadre". Veras tres tarjetas: total facturado, total a repartir al personal y total apartado para materiales.' />
+    <HelpStep number={3} title="Revisar materiales apartados" body="Si algun servicio tiene costo de material definido, aparece una tabla con el desglose por folio y servicio. Este monto debe quedar en caja para reponer insumos." />
+    <HelpStep number={4} title="Confirmar y auditar" body="Al confirmar, se genera un registro historico inmutable. El sistema marca esos servicios como pagados y no los incluira en cuadres futuros." />
+
+    <SectionTitle>Exportar a Excel</SectionTitle>
+    <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+      El boton <strong>Exportar ventas</strong> genera un archivo .xlsx con estas pestanas:
+    </p>
+    <div className="flex flex-col gap-0">
+      {[
+        { label: 'Ventas',     desc: 'Resumen de todas las notas: folio, fecha, cliente, totales y metodos de pago.' },
+        { label: 'Comisiones', desc: 'Total comisionado por empleado y cuantos servicios realizo.' },
+        { label: '[Empleado]', desc: 'Una pestana por colaborador con el desglose servicio a servicio.' },
+        { label: 'Materiales', desc: 'Estructura del desglose de costos. El detalle completo se obtiene desde el pre-cuadre de comisiones con el mismo rango de fechas.' },
+      ].map((row, i) => (
+        <div key={i} className="flex items-start gap-3 text-xs py-3 border-b last:border-b-0" style={{ borderColor: 'var(--color-border)' }}>
+          <strong className="w-28 flex-shrink-0 font-mono pt-0.5" style={{ color: 'var(--color-accent)' }}>{row.label}</strong>
+          <span className="leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{row.desc}</span>
+        </div>
+      ))}
+    </div>
+
     <CalloutBox icon={<Zap size={16} />} variant="tip" title="Cuadres parciales">
-      Puedes hacer cuadres en cualquier momento. Los nuevos cuadres solo incluiran ventas pendientes.
+      Puedes hacer cuadres en cualquier momento del mes. Los nuevos cuadres solo incluiran ventas pendientes, nunca las ya procesadas.
+    </CalloutBox>
+    <CalloutBox icon={<Package size={16} />} variant="info" title="Materiales y cuadre de caja">
+      El monto apartado para materiales NO sale automaticamente de caja. Es una referencia para que sepas cuanto debes conservar para reponer insumos antes de distribuir el resto al personal.
+    </CalloutBox>
+    <CalloutBox icon={<AlertTriangle size={16} />} variant="warning" title="Ventas canceladas y materiales">
+      Si una venta se cancela, sus registros de costo de material se conservan en la base de datos para auditoria,
+      pero el sistema los excluye automaticamente del pre-cuadre y de cualquier calculo de comisiones.
+      La caja recibe un movimiento inverso por el monto pagado. No necesitas hacer ningun ajuste manual.
     </CalloutBox>
   </GuideWrapper>
 )
@@ -326,8 +379,30 @@ const ServicesGuide = () => (
     <HelpStep number={1} title="Crear una categoria" body='Ve a la pestana Categorias y haz clic en "Nueva categoria". Asigna un nombre y un color para identificarla visualmente.' />
     <HelpStep number={2} title="Crear un servicio" body='Haz clic en "Nuevo servicio". Completa el nombre, precio y duracion en minutos. La duracion se usa en la Agenda para calcular la hora de fin de la cita.' />
     <HelpStep number={3} title="Asignar jefe del servicio" body='En el campo "Jefe del servicio" asigna cual de los empleados Owner es el responsable. Esto determina quien recibe el remanente en el calculo de comisiones.' />
+    <HelpStep number={4} title="Costo de material (opcional)" body='Si el servicio consume insumos o productos (tinte, keratina, alaciado, etc.), ingresa el costo unitario en el campo "Costo de material". Este monto se descontara del precio antes de calcular cualquier comision y quedara registrado como apartado por cada venta.' />
+    <SectionTitle>Campo: Costo de material</SectionTitle>
+    <div className="flex flex-col gap-3">
+      {[
+        { icon: '📦', label: 'Que es',           desc: 'Monto fijo por unidad de servicio destinado a cubrir el costo de los insumos utilizados. No se comisiona: queda apartado para el negocio.' },
+        { icon: '🧮', label: 'Como funciona',    desc: 'Al generar la venta, el sistema resta automaticamente este valor del precio. Las comisiones de auxiliares y jefe se calculan sobre el restante, no sobre el precio total.' },
+        { icon: '📊', label: 'Trazabilidad',     desc: 'Cada venta registra un snapshot del costo en ese momento. Puedes consultar el total apartado por periodo en el modulo de Comisiones al generar un pre-cuadre.' },
+        { icon: '⚖️', label: 'Ejemplo practico', desc: 'Alaciado $1,000 · Costo material $250 → Base comisionable $750. Auxiliar al 40%: recibe $300 (no $400). Jefe: recibe el remanente sobre $750.' },
+      ].map((row, i) => (
+        <div key={i} className="flex items-start gap-3 p-3 rounded-xl border"
+             style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+          <span className="text-lg flex-shrink-0">{row.icon}</span>
+          <div>
+            <p className="text-xs font-semibold" style={{ color: 'var(--color-text)' }}>{row.label}</p>
+            <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{row.desc}</p>
+          </div>
+        </div>
+      ))}
+    </div>
     <CalloutBox icon={<Crown size={16} />} variant="tip" title="Por que asignar un jefe en el servicio">
       El jefe se asigna en el catalogo, no en cada venta. Esto permite que el sistema calcule automaticamente quien recibe el remanente sin que tengas que especificarlo en cada cobro.
+    </CalloutBox>
+    <CalloutBox icon={<Info size={16} />} variant="info" title="Servicios sin costo de material">
+      El campo es completamente opcional. Si lo dejas en cero, el comportamiento es exactamente igual que antes: las comisiones se calculan sobre el precio completo del servicio.
     </CalloutBox>
   </GuideWrapper>
 )
@@ -432,6 +507,42 @@ const SettingsGuide = () => (
     <CalloutBox icon={<ShieldCheck size={16} />} variant="warning" title="Respaldo semanal recomendado">
       Exporta la base de datos al menos una vez por semana y guarda el archivo en un lugar seguro.
       Si el equipo falla, podras restaurar toda la informacion desde la copia de seguridad.
+    </CalloutBox>
+
+    <SectionTitle>Pestana: Actualizaciones</SectionTitle>
+    <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+      Cuando hay una nueva version disponible, Luma muestra una notificacion al iniciar la aplicacion.
+      En Windows la descarga puede ser automatica. En Mac la instalacion siempre es manual: descarga el
+      archivo y reemplaza la aplicacion en tu carpeta de Aplicaciones.
+    </p>
+    <CalloutBox icon={<AlertTriangle size={16} />} variant="warning" title="Mac: como cerrar Luma correctamente">
+      En Mac, hacer clic en el boton rojo de la ventana (✕) solo oculta la ventana — el proceso de Luma
+      sigue corriendo en segundo plano. Esto significa que si instalas una actualizacion sin cerrar
+      correctamente la app, la version anterior puede seguir activa.
+      Para cerrar Luma por completo antes de actualizar usa cualquiera de estas opciones:
+    </CalloutBox>
+    <div className="flex flex-col gap-2 mt-1">
+      {[
+        { keys: ['⌘', 'Q'],         desc: 'Atajo de teclado para salir completamente de Luma' },
+        { keys: ['Clic derecho'],    desc: 'Clic derecho sobre el icono de Luma en el Dock → Salir' },
+        { keys: ['Luma → Salir'],    desc: 'En la barra de menu superior: Luma → Salir' },
+      ].map((s, i) => (
+        <div key={i} className="flex items-center gap-3 text-xs">
+          <div className="flex gap-1 flex-shrink-0">
+            {s.keys.map((k, j) => (
+              <kbd key={j} className="px-2 py-1 rounded text-xs font-mono font-semibold"
+                   style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
+                {k}
+              </kbd>
+            ))}
+          </div>
+          <span style={{ color: 'var(--color-text-muted)' }}>{s.desc}</span>
+        </div>
+      ))}
+    </div>
+    <CalloutBox icon={<Info size={16} />} variant="info" title="Como saber que Luma esta cerrada">
+      Cuando Luma esta completamente cerrada, su icono desaparece del Dock o no tiene el punto indicador
+      debajo. Si el punto sigue visible, el proceso aun esta activo.
     </CalloutBox>
 
     <SectionTitle>Pestana: Papelera de citas</SectionTitle>
