@@ -62,6 +62,7 @@ function runMigrations() {
   if (current < 11) applyMigration11()  // ← gc_updated_at en appointments + gc_sync_token en settings
   if (current < 12) applyMigration12()  // ← Normalizar fechas a UTC puro en appointments
   if (current < 13) applyMigration13()  // ← material_cost en services + tabla de costos de materiales
+  if (current < 14) applyMigration14()  // ← tabla invoice_service_salon_income (remanente sin owner)
 }
 
 function getCurrentVersion(): number {
@@ -795,6 +796,42 @@ function applyMigration13() {
   migrate()
   setVersion(13)
   log('Migración 13 completada.')
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// MIGRACIÓN 14 — Ingresos del salón por servicios sin owner
+//
+// Cuando un servicio no tiene owner asignado, el remanente de la base
+// comisionable tras pagar a los auxiliares se registra aquí como ingreso
+// del salón. Mismo esquema de snapshot que material_costs: consultable
+// por periodo, visible en pre-cuadre y en Excel exportado.
+// ───────────────────────────────────────────────────────────────────────────────
+function applyMigration14() {
+  log('Aplicando migración 14: tabla invoice_service_salon_income...')
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS invoice_service_salon_income (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_service_id  INTEGER NOT NULL REFERENCES invoice_services(id) ON DELETE CASCADE,
+        invoice_id          INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        service_name        TEXT    NOT NULL,
+        line_total          REAL    NOT NULL,
+        aux_commissions     REAL    NOT NULL DEFAULT 0,
+        material_cost       REAL    NOT NULL DEFAULT 0,
+        salon_income        REAL    NOT NULL,
+        created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_issi_invoice
+        ON invoice_service_salon_income(invoice_id);
+      CREATE INDEX IF NOT EXISTS idx_issi_date
+        ON invoice_service_salon_income(created_at);
+      CREATE INDEX IF NOT EXISTS idx_issi_inv_service
+        ON invoice_service_salon_income(invoice_service_id);
+    `)
+  })
+  migrate()
+  setVersion(14)
+  log('Migración 14 completada.')
 }
 
 function applyMigration6() {

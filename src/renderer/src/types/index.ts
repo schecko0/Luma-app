@@ -236,6 +236,10 @@ export interface CommissionPreview {
   total_materials: number
   /** Líneas individuales de costos de materiales */
   material_lines: MaterialCostLine[]
+  /** Total de ingresos del salón por servicios sin owner */
+  total_salon_income: number
+  /** Líneas individuales de ingresos del salón */
+  salon_income_lines: SalonIncomeLine[]
   /** Líneas del mismo rango que ya fueron incluidas en un cuadre anterior */
   already_commissioned: number
 }
@@ -248,6 +252,16 @@ export interface MaterialCostLine {
   material_cost_unit: number
   quantity:           number
   total_material:     number
+}
+
+export interface SalonIncomeLine {
+  invoice_folio:  string
+  invoice_date:   string
+  service_name:   string
+  line_total:     number
+  aux_commissions: number
+  material_cost:  number
+  salon_income:   number
 }
 
 // ── Agenda / Citas ────────────────────────────────────────────────────────────

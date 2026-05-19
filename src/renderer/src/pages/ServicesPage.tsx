@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Scissors, Plus, Search, Pencil, Power, PowerOff,
-  RefreshCw, Tag, List, AlertCircle, Crown,
+  RefreshCw, Tag, List, AlertCircle, Crown, Package,
 } from 'lucide-react'
 import type { Service, ServiceCategory, Employee, PaginatedResult } from '../types'
 import { Modal }        from '../components/ui/Modal'
@@ -21,7 +21,7 @@ const fmtDuration = (min: number) => {
 export const ServicesPage: React.FC = () => {
   const [tab, setTab]                  = useState<Tab>('services')
   const [categories, setCategories]    = useState<ServiceCategory[]>([])
-  const [owners, setOwners]            = useState<Employee[]>([])        // ← NUEVO: jefes activos
+  const [owners, setOwners]            = useState<Employee[]>([])
   const [result, setResult]            = useState<PaginatedResult<Service> | null>(null)
   const [loading, setLoading]          = useState(true)
   const [page, setPage]                = useState(1)
@@ -35,7 +35,6 @@ export const ServicesPage: React.FC = () => {
   const [error, setError]              = useState<string | null>(null)
   const [toggling, setToggling]        = useState<number | null>(null)
 
-  // Cargar categorías y owners en paralelo
   const loadCategories = useCallback(async () => {
     const res = await window.electronAPI.categories.list(true)
     if (res.ok) setCategories(res.data as ServiceCategory[])
@@ -44,7 +43,6 @@ export const ServicesPage: React.FC = () => {
   const loadOwners = useCallback(async () => {
     const res = await window.electronAPI.employees.all()
     if (res.ok) {
-      // Filtrar solo los que tienen role = 'owner'
       const all = res.data as Employee[]
       setOwners(all.filter(e => e.role === 'owner'))
     }
@@ -66,7 +64,6 @@ export const ServicesPage: React.FC = () => {
   useEffect(() => { if (tab === 'services') loadServices() }, [loadServices, tab])
   useEffect(() => { setPage(1) }, [search, filterCat, includeInactive])
 
-  // ── Acciones servicios ──────────────────────────────────────────────
   const openCreateSvc = () => { setEditSvc(null); setModalOpen(true) }
   const openEditSvc   = (s: Service) => { setEditSvc(s); setModalOpen(true) }
 
@@ -85,7 +82,6 @@ export const ServicesPage: React.FC = () => {
     setToggling(null)
   }
 
-  // ── Acciones categorías ─────────────────────────────────────────────
   const openCreateCat = () => { setEditCat(null); setCatModal(true) }
   const openEditCat   = (c: ServiceCategory) => { setEditCat(c); setCatModal(true) }
 
@@ -173,7 +169,7 @@ export const ServicesPage: React.FC = () => {
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                        {['Servicio', 'Categoría', 'Jefe', 'Precio', 'Duración', 'Estado', 'Acciones'].map(h => (
+                        {['Servicio', 'Categoría', 'Jefe', 'Precio', 'Costo material', 'Duración', 'Estado', 'Acciones'].map(h => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-medium"
                               style={{ color: 'var(--color-text-muted)' }}>{h}</th>
                         ))}
@@ -193,7 +189,6 @@ export const ServicesPage: React.FC = () => {
                               {svc.category_name}
                             </span>
                           </td>
-                          {/* Columna Jefe */}
                           <td className="px-4 py-3">
                             {svc.owner_name
                               ? <span className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-accent)' }}>
@@ -204,6 +199,16 @@ export const ServicesPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 font-medium" style={{ color: 'var(--color-text)' }}>
                             ${svc.price.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </td>
+                          {/* Columna costo de material */}
+                          <td className="px-4 py-3">
+                            {(svc.material_cost ?? 0) > 0
+                              ? <span className="flex items-center gap-1 text-xs font-medium" style={{ color: 'var(--color-info)' }}>
+                                  <Package size={11} />
+                                  ${(svc.material_cost!).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                                </span>
+                              : <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>—</span>
+                            }
                           </td>
                           <td className="px-4 py-3">
                             <Badge variant="info">{fmtDuration(svc.duration_min)}</Badge>
@@ -275,7 +280,7 @@ export const ServicesPage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal servicio — ahora recibe owners */}
+      {/* Modal servicio */}
       <Modal isOpen={modalOpen} onClose={() => { setModalOpen(false); setEditSvc(null) }}
         title={editingService ? 'Editar servicio' : 'Nuevo servicio'}
         subtitle={editingService?.name} width="md">

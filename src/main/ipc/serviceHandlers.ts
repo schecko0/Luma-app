@@ -106,9 +106,12 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
   ipcMain.handle('services:all', () => {
     try {
       const db   = getDb()
+      // FIX: incluir s.material_cost para que el POS reciba el valor correcto,
+      // lo asigne a CartLine.material_cost_unit y lo envíe en el payload.
       const rows = db.prepare(`
         SELECT s.id, s.name, s.price, s.duration_min, s.category_id,
-               s.owner_employee_id, c.name AS category_name,
+               s.material_cost, s.owner_employee_id,
+               c.name AS category_name,
                (e.first_name || ' ' || e.last_name) AS owner_name
         FROM services s
         JOIN service_categories c ON c.id = s.category_id

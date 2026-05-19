@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron'
 import { getDb } from '../../database/database'
 import { nowISO, withTransaction } from '../../database/dbUtils'
-import type { CommissionPreview, CommissionPreviewEmployee, CommissionPreviewDetail, PaginationParams } from '../../renderer/src/types'
+import type { CommissionPreview, CommissionPreviewEmployee, CommissionPreviewDetail, PaginationParams, SalonIncomeLine } from '../../renderer/src/types'
 
 export function registerCommissionHandlers(ipcMain: IpcMain) {
 
@@ -118,7 +118,9 @@ export function registerCommissionHandlers(ipcMain: IpcMain) {
       const total_to_pay      = total_commissions + total_salaries
       const total_business    = total_invoiced - total_to_pay
 
-      // ── Materiales apartados en el rango ─────────────────────────────────────────────────
+      // ── Materiales apartados en el rango (solo líneas aún no comisionadas) ──────
+      // FIX: filtrar por commission_run_id IS NULL via EXISTS para que los
+      // materiales de cortes ya confirmados no se sumen al preview pendiente.
       const materialRows = db.prepare(`
         SELECT
           i.folio       AS invoice_folio,
@@ -132,6 +134,11 @@ export function registerCommissionHandlers(ipcMain: IpcMain) {
         WHERE i.status != 'cancelled'
           AND DATE(i.created_at) >= DATE(?)
           AND DATE(i.created_at) <= DATE(?)
+          AND EXISTS (
+            SELECT 1 FROM invoice_service_employees ise
+            WHERE ise.invoice_service_id = mc.invoice_service_id
+              AND ise.commission_run_id IS NULL
+          )
         ORDER BY i.created_at ASC
       `).all(dateFrom, dateTo) as {
         invoice_folio: string; invoice_date: string; service_name: string
@@ -140,11 +147,38 @@ export function registerCommissionHandlers(ipcMain: IpcMain) {
 
       const total_materials = materialRows.reduce((s, r) => s + r.total_material, 0)
 
+      // ── Ingresos del salón por servicios sin owner (solo no comisionados) ───────
+      // FIX: mismo filtro commission_run_id IS NULL para consistencia con el preview.
+      const salonIncomeRows = db.prepare(`
+        SELECT
+          i.folio       AS invoice_folio,
+          i.created_at  AS invoice_date,
+          si.service_name,
+          si.line_total,
+          si.aux_commissions,
+          si.material_cost,
+          si.salon_income
+        FROM invoice_service_salon_income si
+        JOIN invoices i ON i.id = si.invoice_id
+        WHERE i.status != 'cancelled'
+          AND DATE(i.created_at) >= DATE(?)
+          AND DATE(i.created_at) <= DATE(?)
+          AND EXISTS (
+            SELECT 1 FROM invoice_service_employees ise
+            WHERE ise.invoice_service_id = si.invoice_service_id
+              AND ise.commission_run_id IS NULL
+          )
+        ORDER BY i.created_at ASC
+      `).all(dateFrom, dateTo) as SalonIncomeLine[]
+
+      const total_salon_income = salonIncomeRows.reduce((s, r) => s + r.salon_income, 0)
+
       const preview: CommissionPreview = {
         date_from: dateFrom, date_to: dateTo,
         employees, total_invoiced, total_commissions, total_business,
         total_salaries, total_to_pay, include_salaries: includeSalaries,
         total_materials, material_lines: materialRows,
+        total_salon_income, salon_income_lines: salonIncomeRows,
         already_commissioned,
       }
 
@@ -252,9 +286,6 @@ export function registerCommissionHandlers(ipcMain: IpcMain) {
         const processedEmps = new Set<number>()
 
         for (const line of lines) {
-          // El snapshot del sueldo base solo lo guardamos con el monto REAL pagado en este corte
-          // Si includeSalaries es false para este corte, el snapshot será 0.
-          // Solo guardamos el sueldo base en la primera línea del empleado para no duplicar en el historial
           const salaryToSave = (includeSalaries && !processedEmps.has(line.employee_id)) ? line.base_salary : 0
           processedEmps.add(line.employee_id)
 

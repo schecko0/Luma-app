@@ -4,7 +4,7 @@ import {
   Check, Loader2, AlertCircle, History, Eye, Info, Search, X, User, FileSpreadsheet
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import type { CommissionPreview, CommissionPreviewEmployee, CommissionRun, PaginatedResult, CommissionDetail, MaterialCostLine } from '../types'
+import type { CommissionPreview, CommissionPreviewEmployee, CommissionRun, PaginatedResult, CommissionDetail, MaterialCostLine, SalonIncomeLine } from '../types'
 import { PageHeader, Badge, Spinner, Paginator } from '../components/ui/index'
 import { Modal } from '../components/ui/Modal'
 import { Autocomplete } from '../components/pos/Autocomplete'
@@ -90,8 +90,14 @@ const NewCommissionView: React.FC = () => {
     if (!dateFrom || !dateTo) { setError('Selecciona un rango de fechas para exportar.'); return }
     setExportingXls(true); setError(null)
     try {
+      // Obtener ventas y líneas de servicios
       const res = await window.electronAPI.invoices.exportSalesData(dateFrom, dateTo)
       if (!res.ok || !res.data) { setError(res.error ?? 'Error al obtener datos'); return }
+
+      // Obtener materiales e ingresos del salón reutilizando el preview de comisiones
+      // (no confirma nada, solo calcula)
+      const prevRes = await window.electronAPI.commissions.preview(dateFrom, dateTo, false)
+      const previewData = prevRes.ok ? (prevRes.data as CommissionPreview) : null
 
       const { invoices, serviceLines } = res.data as {
         invoices: {
@@ -203,18 +209,48 @@ const NewCommissionView: React.FC = () => {
         XLSX.utils.book_append_sheet(wb, wsEmp, sheetName)
       }
 
-      // ── Pestaña: Materiales apartados ────────────────────────────────────
-      // Los datos de material se almacenan en invoice_service_material_costs
-      // por venta. Para el desglose completo se debe generar un pre-cuadre
-      // de comisiones con el mismo rango; aquí se deja la estructura lista
-      // y una nota orientativa.
-      const wsMateriales = XLSX.utils.aoa_to_sheet([
-        ['Folio', 'Fecha', 'Servicio', 'Costo material unitario', 'Cantidad', 'Total apartado'],
-        ['', '', '— Genera un pre-cuadre de comisiones con este mismo rango de fechas', '', '', ''],
-        ['', '', '  para ver el desglose completo por servicio en el módulo de Comisiones.', '', '', ''],
+      // ── Pestaña: Materiales apartados ───────────────────────────────────────
+      const matLines   = previewData?.material_lines ?? []
+      const matTotal   = previewData?.total_materials ?? 0
+      const matHeader  = ['Folio', 'Fecha', 'Servicio', 'Costo unitario', 'Cantidad', 'Total apartado']
+      const matRows    = matLines.map(m => [
+        m.invoice_folio,
+        new Date(m.invoice_date).toLocaleDateString('es-MX'),
+        m.service_name,
+        m.material_cost_unit,
+        m.quantity,
+        m.total_material,
       ])
-      wsMateriales['!cols'] = [10, 12, 50, 24, 10, 16].map(w => ({ wch: w }))
+      const matTotal_row = ['', '', '', '', 'TOTAL', matTotal]
+      const wsMateriales = XLSX.utils.aoa_to_sheet([
+        matHeader,
+        ...matRows,
+        ...(matRows.length > 0 ? [[], matTotal_row] : [['', '', 'Sin costos de material registrados en este periodo', '', '', '']]),
+      ])
+      wsMateriales['!cols'] = [10, 14, 36, 16, 10, 16].map(w => ({ wch: w }))
       XLSX.utils.book_append_sheet(wb, wsMateriales, 'Materiales')
+
+      // ── Pestaña: Ingresos del salón ───────────────────────────────────────
+      const salLines   = previewData?.salon_income_lines ?? []
+      const salTotal   = previewData?.total_salon_income ?? 0
+      const salHeader  = ['Folio', 'Fecha', 'Servicio', 'Total servicio', 'Comis. aux.', 'Costo material', 'Ingreso salón']
+      const salRows    = salLines.map(s => [
+        s.invoice_folio,
+        new Date(s.invoice_date).toLocaleDateString('es-MX'),
+        s.service_name,
+        s.line_total,
+        s.aux_commissions,
+        s.material_cost,
+        s.salon_income,
+      ])
+      const salTotal_row = ['', '', '', '', '', 'TOTAL', salTotal]
+      const wsIngresosSalon = XLSX.utils.aoa_to_sheet([
+        salHeader,
+        ...salRows,
+        ...(salRows.length > 0 ? [[], salTotal_row] : [['', '', 'Sin ingresos del salón en este periodo (todos los servicios tienen jefe asignado)', '', '', '', '']]),
+      ])
+      wsIngresosSalon['!cols'] = [10, 14, 28, 14, 14, 14, 14].map(w => ({ wch: w }))
+      XLSX.utils.book_append_sheet(wb, wsIngresosSalon, 'Ingresos Salon')
 
       // ── Descargar ─────────────────────────────────────────────────────────
       const fileName = `ventas_${dateFrom}_${dateTo}.xlsx`
@@ -340,11 +376,12 @@ const NewCommissionView: React.FC = () => {
             </div>
           )}
           {/* Tarjetas de resumen */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             {[
-              { label: 'Total facturado en el periodo', value: fmt(preview.total_invoiced),    color: 'var(--color-text)',    sub: `Del ${preview.date_from} al ${preview.date_to}` },
-              { label: 'Total a repartir',              value: fmt(preview.total_to_pay),      color: 'var(--color-warning)', sub: `${fmt(preview.total_commissions)} en comisiones + ${fmt(preview.total_salaries)} en sueldos base` },
-              { label: 'Apartado para materiales',      value: fmt(preview.total_materials),   color: 'var(--color-info)',    sub: `${preview.material_lines.length} servicio(s) con costo de material` },
+              { label: 'Total facturado en el periodo', value: fmt(preview.total_invoiced),      color: 'var(--color-text)',    sub: `Del ${preview.date_from} al ${preview.date_to}` },
+              { label: 'Total a repartir',              value: fmt(preview.total_to_pay),        color: 'var(--color-warning)', sub: `${fmt(preview.total_commissions)} comisiones + ${fmt(preview.total_salaries)} sueldos` },
+              { label: 'Apartado para materiales',      value: fmt(preview.total_materials),     color: 'var(--color-info)',    sub: `${preview.material_lines.length} servicio(s) con costo de material` },
+              { label: 'Ingresos del salón',           value: fmt(preview.total_salon_income),  color: 'var(--color-success)', sub: `${preview.salon_income_lines.length} servicio(s) sin jefe asignado` },
             ].map(card => (
               <div key={card.label} className="luma-surface p-4">
                 <p className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>{card.label}</p>
@@ -410,6 +447,46 @@ const NewCommissionView: React.FC = () => {
                       <tr style={{ borderTop: '2px solid var(--color-border)' }}>
                         <td colSpan={5} className="px-4 py-2 text-right font-medium" style={{ color: 'var(--color-text-muted)' }}>Total:</td>
                         <td className="px-4 py-2 font-bold" style={{ color: 'var(--color-info)' }}>{fmt(preview.total_materials)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Tabla de ingresos del salón */}
+              {preview.total_salon_income > 0 && (
+                <div className="luma-surface overflow-hidden">
+                  <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
+                    <p className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--color-text)' }}>
+                      <span style={{ color: 'var(--color-success)' }}>🏢</span> Ingresos del salón (servicios sin jefe)
+                    </p>
+                    <span className="text-sm font-bold" style={{ color: 'var(--color-success)' }}>{fmt(preview.total_salon_income)}</span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr style={{ background: 'var(--color-surface-2)', borderBottom: '1px solid var(--color-border)' }}>
+                        {['Folio', 'Fecha', 'Servicio', 'Total servicio', 'Comis. aux.', 'Material', 'Ingreso salón'].map(h => (
+                          <th key={h} className="text-left px-4 py-2 font-medium" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.salon_income_lines.map((sl, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                          <td className="px-4 py-2 font-mono" style={{ color: 'var(--color-accent)' }}>{sl.invoice_folio}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text-muted)' }}>
+                            {new Date(sl.invoice_date).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
+                          </td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text)' }}>{sl.service_name}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-text-muted)' }}>{fmt(sl.line_total)}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-warning)' }}>{fmt(sl.aux_commissions)}</td>
+                          <td className="px-4 py-2" style={{ color: 'var(--color-info)' }}>{fmt(sl.material_cost)}</td>
+                          <td className="px-4 py-2 font-medium" style={{ color: 'var(--color-success)' }}>{fmt(sl.salon_income)}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ borderTop: '2px solid var(--color-border)' }}>
+                        <td colSpan={6} className="px-4 py-2 text-right font-medium" style={{ color: 'var(--color-text-muted)' }}>Total:</td>
+                        <td className="px-4 py-2 font-bold" style={{ color: 'var(--color-success)' }}>{fmt(preview.total_salon_income)}</td>
                       </tr>
                     </tbody>
                   </table>

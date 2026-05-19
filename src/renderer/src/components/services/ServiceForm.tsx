@@ -50,7 +50,7 @@ export const ServiceForm: React.FC<Props> = ({ initial, categories, owners, onSa
     if (!form.category_id)     e.category_id  = 'Selecciona una categoría.'
     if (form.price < 0)        e.price        = 'El precio no puede ser negativo.'
     if (form.duration_min < 1) e.duration_min = 'La duración debe ser al menos 1 minuto.'
-    if (!form.owner_employee_id) e.owner_employee_id = 'El jefe responsable es obligatorio.'
+    //if (!form.owner_employee_id) e.owner_employee_id = 'El jefe responsable es obligatorio.'
     setErrors(e)
     return !Object.keys(e).length
   }

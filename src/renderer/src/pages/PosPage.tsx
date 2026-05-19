@@ -113,7 +113,6 @@ const SaleView: React.FC = () => {
   const [successFolio, setSuccess]   = useState<string | null>(null)
   const [allEmployees, setAllEmp]    = useState<Employee[]>([])
   const [confirmNoClient, setConfirmNoClient] = useState(false)
-  const [noOwnerService, setNoOwnerService]   = useState<string | null>(null)
   const [hasDraft, setHasDraft]      = useState(!!_draft && (_draft.cart.length > 0 || !!_draft.client))
 
   useEffect(() => {
@@ -164,10 +163,6 @@ const SaleView: React.FC = () => {
   }, [total])
 
   const addService = (svc: Service) => {
-    if (!svc.owner_employee_id) {
-      setNoOwnerService(svc.name)
-      return
-    }
     setCart(prev => [...prev, {
       _key: `${svc.id}_${Date.now()}`,
       service_id: svc.id, service_name: svc.name,
@@ -318,28 +313,6 @@ const SaleView: React.FC = () => {
 
   return (
     <>
-      <Modal isOpen={!!noOwnerService} onClose={() => setNoOwnerService(null)}
-        title="Servicio sin jefe asignado" width="sm">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-start gap-3 text-sm" style={{ color: 'var(--color-text)' }}>
-            <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--color-danger)' }} />
-            <div>
-              <p className="font-medium mb-1">No se puede agregar <strong>"{noOwnerService}"</strong></p>
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                Este servicio no tiene un jefe responsable asignado. Es necesario para calcular las comisiones correctamente.
-              </p>
-            </div>
-          </div>
-          <div className="rounded-lg px-3 py-2 text-xs"
-               style={{ background: 'color-mix(in srgb,var(--color-info) 10%,transparent)', color: 'var(--color-info)' }}>
-            Ve a <strong>Servicios → Editar</strong> y asigna un jefe responsable, luego regresa al POS. Tu venta en curso se conservará.
-          </div>
-          <div className="flex justify-end">
-            <button onClick={() => setNoOwnerService(null)} className="luma-btn-primary">Entendido</button>
-          </div>
-        </div>
-      </Modal>
-
       <Modal isOpen={confirmNoClient} onClose={() => setConfirmNoClient(false)}
         title="¿Continuar sin cliente?" width="sm">
         <div className="flex flex-col gap-4">
@@ -614,6 +587,8 @@ const CartLineCard: React.FC<{
   overheadPct: number
 }> = ({ line, availableEmployees, onRemove, onUpdateQty, onToggleEmployees, onAddEmployee, onRemoveEmployee, onUpdateWorkSplit, commissionMode, overheadPct }) => {
   const isValid = !!line.owner_employee_id || line.employees.length > 0
+  // FIX: base comisionable correcta = line_total menos el costo de material total
+  const lineCommissionableBase = line.line_total - (line.material_cost_unit * line.quantity)
   return (
     <div className="luma-surface p-3 flex flex-col gap-2">
       <div className="flex items-start gap-2">
@@ -641,11 +616,17 @@ const CartLineCard: React.FC<{
         </button>
       </div>
 
-      {line.owner_name && (
+      {line.owner_name ? (
         <div className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg"
              style={{ background: 'color-mix(in srgb,var(--color-accent) 10%,transparent)', color: 'var(--color-accent)' }}>
           <Crown size={11} />
           <span>Jefe: <strong>{line.owner_name}</strong> — recibe el resto de la comisión</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg"
+             style={{ background: 'color-mix(in srgb,var(--color-success) 10%,transparent)', color: 'var(--color-success)' }}>
+          <Receipt size={11} />
+          <span>Sin jefe — el remanente se registrará como <strong>ingreso del salón</strong></span>
         </div>
       )}
 
@@ -697,10 +678,14 @@ const CartLineCard: React.FC<{
               ? 1 / line.employees.length
               : commissionMode === 'manual' ? split / 100 : 1
 
-            const baseTotal = commissionMode === 'manual' ? line.line_total * (1 - overheadPct / 100) : line.line_total
+            // FIX: calcular sobre la base comisionable (descontando materiales), no sobre line_total.
+            // Para Modo C aplicar overhead sobre la base comisionable también.
+            const effectiveBase = commissionMode === 'manual'
+              ? lineCommissionableBase * (1 - overheadPct / 100)
+              : lineCommissionableBase
             const effectiveAmount = isOwnerAux
-              ? line.line_total * (effectiveCommPct / 100)
-              : baseTotal * (effectiveCommPct / 100) * factor
+              ? lineCommissionableBase * (effectiveCommPct / 100)
+              : effectiveBase * (effectiveCommPct / 100) * factor
 
             return (
               <div key={emp.employee_id} className="flex items-center gap-2">
