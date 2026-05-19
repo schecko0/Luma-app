@@ -74,7 +74,10 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
   ipcMain.handle('services:list', (_e, params: PaginationParams & { categoryId?: number; includeInactive?: boolean }) => {
     try {
       const db = getDb()
-      const { page = 1, pageSize = 20, search = '', categoryId, includeInactive = false } = params
+      const {
+        page = 1, pageSize = 20, search = '', categoryId, includeInactive = false,
+        sortBy, sortDir = 'asc'
+      } = params
       const offset = (page - 1) * pageSize
       const like   = `%${search}%`
       const filters: string[] = []
@@ -82,6 +85,19 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
       if (!includeInactive) filters.push('s.is_active = 1')
       if (categoryId) { filters.push('s.category_id = ?'); args.push(categoryId) }
       const where = `WHERE (s.name LIKE ? OR s.description LIKE ?)${filters.length ? ' AND ' + filters.join(' AND ') : ''}`
+
+      // Mapeo de columnas para ordenamiento (whitelist para seguridad)
+      const allowedCols: Record<string, string> = {
+        name:          's.name',
+        owner_name:    'owner_name',
+        price:         's.price',
+        material_cost: 's.material_cost',
+        duration_min:  's.duration_min',
+      }
+
+      const orderBy = (sortBy && allowedCols[sortBy])
+        ? `ORDER BY ${allowedCols[sortBy]} ${sortDir.toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`
+        : 'ORDER BY c.sort_order ASC, s.name ASC'
 
       const rows = db.prepare(`
         SELECT s.*,
@@ -91,7 +107,7 @@ export function registerServiceHandlers(ipcMain: IpcMain) {
         JOIN service_categories c ON c.id = s.category_id
         LEFT JOIN employees e ON e.id = s.owner_employee_id
         ${where}
-        ORDER BY c.sort_order ASC, s.name ASC
+        ${orderBy}
         LIMIT ? OFFSET ?
       `).all(...args, pageSize, offset) as Service[]
 

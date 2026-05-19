@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Scissors, Plus, Search, Pencil, Power, PowerOff,
   RefreshCw, Tag, List, AlertCircle, Crown, Package,
@@ -9,7 +9,10 @@ import { Badge, EmptyState, Paginator, PageHeader, Spinner, SearchInput } from '
 import { CategoryForm } from '../components/services/CategoryForm'
 import { ServiceForm }  from '../components/services/ServiceForm'
 
-type Tab = 'services' | 'categories'
+type Tab     = 'services' | 'categories'
+type SortCol = 'name' | 'owner_name' | 'price' | 'material_cost' | 'duration_min'
+type SortDir = 'asc' | 'desc'
+
 const PAGE_SIZE = 15
 
 const fmtDuration = (min: number) => {
@@ -17,6 +20,18 @@ const fmtDuration = (min: number) => {
   const h = Math.floor(min / 60), m = min % 60
   return m > 0 ? `${h}h ${m}min` : `${h}h`
 }
+
+// Columnas ordenables: [label, SortCol | null]
+const COLUMNS: [string, SortCol | null][] = [
+  ['Servicio',        'name'],
+  ['Categoría',       null],
+  ['Jefe',            'owner_name'],
+  ['Precio',          'price'],
+  ['Costo material',  'material_cost'],
+  ['Duración',        'duration_min'],
+  ['Estado',          null],
+  ['Acciones',        null],
+]
 
 export const ServicesPage: React.FC = () => {
   const [tab, setTab]                  = useState<Tab>('services')
@@ -34,6 +49,9 @@ export const ServicesPage: React.FC = () => {
   const [catModalOpen, setCatModal]    = useState(false)
   const [error, setError]              = useState<string | null>(null)
   const [toggling, setToggling]        = useState<number | null>(null)
+  // Ordenamiento local de la página visible
+  const [sortCol, setSortCol]          = useState<SortCol | null>(null)
+  const [sortDir, setSortDir]          = useState<SortDir>('asc')
 
   const loadCategories = useCallback(async () => {
     const res = await window.electronAPI.categories.list(true)
@@ -53,17 +71,28 @@ export const ServicesPage: React.FC = () => {
     try {
       const res = await window.electronAPI.services.list({
         page, pageSize: PAGE_SIZE, search, categoryId: filterCat, includeInactive,
+        sortBy: sortCol ?? undefined, sortDir,
       })
       if (res.ok) setResult(res.data as PaginatedResult<Service>)
       else setError(res.error ?? 'Error desconocido')
     } catch (e) { setError(String(e)) }
     finally { setLoading(false) }
-  }, [page, search, filterCat, includeInactive])
+  }, [page, search, filterCat, includeInactive, sortCol, sortDir])
 
   useEffect(() => { loadCategories(); loadOwners() }, [loadCategories, loadOwners])
   useEffect(() => { if (tab === 'services') loadServices() }, [loadServices, tab])
-  useEffect(() => { setPage(1) }, [search, filterCat, includeInactive])
+  useEffect(() => { setPage(1) }, [search, filterCat, includeInactive, sortCol, sortDir])
 
+  // ── Ordenamiento ───────────────────────────────────────────────────
+  const toggleSort = (col: SortCol) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
+
+  const items = result?.items ?? []
+
+
+  // ── Acciones servicios ──────────────────────────────────────────────
   const openCreateSvc = () => { setEditSvc(null); setModalOpen(true) }
   const openEditSvc   = (s: Service) => { setEditSvc(s); setModalOpen(true) }
 
@@ -82,6 +111,7 @@ export const ServicesPage: React.FC = () => {
     setToggling(null)
   }
 
+  // ── Acciones categorías ─────────────────────────────────────────────
   const openCreateCat = () => { setEditCat(null); setCatModal(true) }
   const openEditCat   = (c: ServiceCategory) => { setEditCat(c); setCatModal(true) }
 
@@ -169,16 +199,31 @@ export const ServicesPage: React.FC = () => {
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                        {['Servicio', 'Categoría', 'Jefe', 'Precio', 'Costo material', 'Duración', 'Estado', 'Acciones'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-medium"
-                              style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                        {COLUMNS.map(([label, col]) => (
+                          <th key={label}
+                              onClick={() => col && toggleSort(col)}
+                              className="text-left px-4 py-3 text-xs font-medium select-none"
+                              style={{
+                                color:  col && sortCol === col ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                                cursor: col ? 'pointer' : 'default',
+                                whiteSpace: 'nowrap',
+                              }}>
+                            <span className="inline-flex items-center gap-1">
+                              {label}
+                              {col && (
+                                <span style={{ opacity: sortCol === col ? 1 : 0.3, fontSize: 10 }}>
+                                  {sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                </span>
+                              )}
+                            </span>
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {result?.items.map((svc, i) => (
+                      {items.map((svc, i) => (
                         <tr key={svc.id} className="transition-colors hover:bg-white/5"
-                            style={{ borderBottom: i < result.items.length - 1 ? '1px solid var(--color-border)' : 'none', opacity: svc.is_active ? 1 : 0.5 }}>
+                            style={{ borderBottom: i < items.length - 1 ? '1px solid var(--color-border)' : 'none', opacity: svc.is_active ? 1 : 0.5 }}>
                           <td className="px-4 py-3">
                             <p className="font-medium" style={{ color: 'var(--color-text)' }}>{svc.name}</p>
                             {svc.description && <p className="text-xs truncate max-w-[180px]" style={{ color: 'var(--color-text-muted)' }}>{svc.description}</p>}
@@ -200,7 +245,6 @@ export const ServicesPage: React.FC = () => {
                           <td className="px-4 py-3 font-medium" style={{ color: 'var(--color-text)' }}>
                             ${svc.price.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                           </td>
-                          {/* Columna costo de material */}
                           <td className="px-4 py-3">
                             {(svc.material_cost ?? 0) > 0
                               ? <span className="flex items-center gap-1 text-xs font-medium" style={{ color: 'var(--color-info)' }}>
